@@ -1,36 +1,17 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": [
-      "ES2022",
-      "DOM",
-      "DOM.Iterable"
-    ],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
-    "moduleResolution": "bundler",
+    "moduleResolution": "Bundler",
     "jsx": "react-jsx",
     "strict": true,
-    "isolatedModules": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "skipLibCheck": true,
-    // `src/lib/db.ts` imports scripts/migration-plan.mjs; checkJs types the
-    // implementation itself instead of a hand-written declaration beside it.
-    "allowJs": true,
-    "checkJs": true,
+    "isolatedModules": true,
     "noEmit": true,
-    "types": [
-      "vite/client",
-      "node"
-    ],
-    "baseUrl": ".",
-    "paths": {
-      "@/*": [
-        "./src/*"
-      ]
-    },
-    "allowImportingTsExtensions": true
+    "types": ["vite/client"]
   },
-  "include": [
-    "src",
-    "server"
-  ]
+  "include": ["src", "vite.config.ts", "capacitor.config.ts"]
 }
