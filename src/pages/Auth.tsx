@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { backend } from "../lib/backend";
-import { DEMO_PASSWORD, DEMO_USERS } from "../lib/api";
+import { DEMO_PASSWORD, DEMO_SUPER, DEMO_USERS } from "../lib/api";
 import { ROLE_HELP, ROLE_LABEL } from "../lib/catalog";
 import { BrandMark } from "../components/icons";
 import { Field } from "../components/ui";
@@ -59,6 +59,12 @@ export function AuthScreen() {
               Sign in as one of the sample staff to see what each role can do. Data stays on this device.
             </p>
             <div className="list">
+              <button className="list-item" disabled={busy} onClick={() => void demo(DEMO_SUPER.email)}>
+                <div className="list-main">
+                  <div className="t">{DEMO_SUPER.name}</div>
+                  <div className="s">Creates hospitals and gives every person their rights</div>
+                </div>
+              </button>
               {DEMO_USERS.map((u) => (
                 <button key={u.email} className="list-item" disabled={busy} onClick={() => void demo(u.email)}>
                   <div className="list-main">
@@ -117,7 +123,7 @@ export function AuthScreen() {
           </p>
           {mode === "up" && (
             <p className="small muted" style={{ marginBottom: 0 }}>
-              If your hospital admin invited your email, you'll join their hospital automatically.
+              If the Super admin added your email to a hospital, you will get access automatically.
             </p>
           )}
         </form>

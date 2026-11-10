@@ -82,12 +82,17 @@ export default function App() {
 
   const ws = phase.kind === "ready" ? phase.ws : null;
   const hospital = ws ? (ws.hospitals.find((h) => h.id === hospitalId) ?? ws.hospitals[0] ?? null) : null;
-  const role = ws && hospital ? (ws.memberships.find((m) => m.hospital_id === hospital.id)?.role ?? null) : null;
+  const role = ws && hospital ? api.roleFor(ws, hospital.id) : null;
+
+  const currentHospital = useRef<string | null>(null);
+  currentHospital.current = hospital?.id ?? null;
 
   const reload = useCallback(async () => {
     if (!hospital || !role) return;
     try {
-      setData(await api.loadHospital(backend, hospital, role));
+      const next = await api.loadHospital(backend, hospital, role);
+      // Ignore a slow load for a hospital the user has already switched away from.
+      if (currentHospital.current === next.hospital.id) setData(next);
     } catch (e) {
       showToast((e as Error).message, "error");
     }
@@ -153,6 +158,7 @@ export default function App() {
       <>
         <Onboarding
           user={ws!.user}
+          isSuper={ws!.isSuper}
           onCreated={async (id) => {
             writeHospitalPref(id);
             setHospitalId(id);

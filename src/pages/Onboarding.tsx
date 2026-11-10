@@ -5,7 +5,17 @@ import type { User } from "../lib/types";
 import { BrandMark } from "../components/icons";
 import { Field } from "../components/ui";
 
-export function Onboarding({ user, onCreated, onError }: { user: User; onCreated: (id: string) => Promise<void>; onError: (m: string) => void }) {
+export function Onboarding({
+  user,
+  isSuper,
+  onCreated,
+  onError,
+}: {
+  user: User;
+  isSuper: boolean;
+  onCreated: (id: string) => Promise<void>;
+  onError: (m: string) => void;
+}) {
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [starter, setStarter] = useState(true);
@@ -29,29 +39,42 @@ export function Onboarding({ user, onCreated, onError }: { user: User; onCreated
         <div className="brand" style={{ justifyContent: "center", marginBottom: 14, fontSize: "1.4rem" }}>
           <BrandMark /> Crash Cart
         </div>
-        <form className="card card-pad" onSubmit={submit}>
-          <h2>Welcome{user.name ? `, ${user.name.split(" ")[0]}` : ""}</h2>
-          <p className="muted small">
-            You're not part of a hospital yet. If your admin invited <strong>{user.email}</strong>, ask them to check the
-            invite went to this address. Or set up your hospital now; you'll be its admin.
-          </p>
-          <Field label="Hospital name">
-            <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. City General Hospital" required />
-          </Field>
-          <Field label="Short code" hint="Shown on reports, e.g. CGH">
-            <input className="input" value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} maxLength={10} required />
-          </Field>
-          <label className="row small" style={{ margin: "4px 0 14px" }}>
-            <input type="checkbox" checked={starter} onChange={(e) => setStarter(e.target.checked)} />
-            Add 3 starter carts (ICU, Emergency, Ward) with standard adult contents
-          </label>
-          <button className="btn primary block" disabled={busy}>
-            {busy ? "Setting up…" : "Create hospital"}
-          </button>
-          <button type="button" className="btn ghost block" style={{ marginTop: 6 }} onClick={() => void backend.signOut()}>
-            Sign out
-          </button>
-        </form>
+        {isSuper ? (
+          <form className="card card-pad" onSubmit={submit}>
+            <h2>Add your first hospital</h2>
+            <p className="muted small">As Super admin you create hospitals and then give staff their access and roles.</p>
+            <Field label="Hospital name">
+              <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. City General Hospital" required />
+            </Field>
+            <Field label="Short code" hint="Shown on reports, e.g. CGH">
+              <input className="input" value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} maxLength={10} required />
+            </Field>
+            <label className="row small" style={{ margin: "4px 0 14px" }}>
+              <input type="checkbox" checked={starter} onChange={(e) => setStarter(e.target.checked)} />
+              Add 3 starter carts (ICU, Emergency, Ward) with standard adult contents
+            </label>
+            <button className="btn primary block" disabled={busy}>
+              {busy ? "Setting up…" : "Create hospital"}
+            </button>
+            <button type="button" className="btn ghost block" style={{ marginTop: 6 }} onClick={() => void backend.signOut()}>
+              Sign out
+            </button>
+          </form>
+        ) : (
+          <div className="card card-pad">
+            <h2>Waiting for access</h2>
+            <p className="muted">
+              You're signed in as <strong>{user.email}</strong>, but you haven't been given access to a hospital yet. Ask your
+              Super admin to add this email with your role. You'll get in as soon as they do; just sign in again.
+            </p>
+            <button className="btn primary block" onClick={() => window.location.reload()}>
+              Check again
+            </button>
+            <button type="button" className="btn ghost block" style={{ marginTop: 6 }} onClick={() => void backend.signOut()}>
+              Sign out
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

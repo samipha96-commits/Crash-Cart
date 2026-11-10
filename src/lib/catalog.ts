@@ -61,7 +61,7 @@ export const ROLE_LABEL: Record<Role, string> = {
 };
 
 export const ROLE_HELP: Record<Role, string> = {
-  hospital_admin: "Everything: carts, items, staff, checks and review",
+  hospital_admin: "Carts, item list, checks and review for their hospital",
   pharmacy: "Restocks carts (quantity, lot, expiry) and runs checks",
   nurse: "Runs crash cart checks",
   quality: "Runs checks, reviews and closes them",

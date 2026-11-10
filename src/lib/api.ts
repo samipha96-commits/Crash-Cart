@@ -25,6 +25,8 @@ const now = () => new Date().toISOString();
 
 export interface Workspace {
   user: User;
+  /** Platform owner: creates hospitals and gives staff their rights. */
+  isSuper: boolean;
   memberships: Membership[];
   hospitals: Hospital[];
 }
@@ -33,10 +35,21 @@ export async function loadWorkspace(b: Backend): Promise<Workspace | null> {
   const user = await b.currentUser();
   if (!user) return null;
   await b.acceptInvites();
+  const isSuper = await b.isSuperAdmin();
   const memberships = await b.select("memberships", { user_id: user.id });
   const ids = memberships.map((m) => m.hospital_id);
-  const hospitals = ids.length ? await b.select("hospitals", { id: ids }, { order: { column: "name" } }) : [];
-  return { user, memberships, hospitals };
+  const hospitals = isSuper
+    ? await b.select("hospitals", {}, { order: { column: "name" } })
+    : ids.length
+      ? await b.select("hospitals", { id: ids }, { order: { column: "name" } })
+      : [];
+  return { user, isSuper, memberships, hospitals };
+}
+
+/** The caller's working role in a hospital (the Super admin acts as its admin). */
+export function roleFor(ws: Workspace, hospitalId: string): Role | null {
+  if (ws.isSuper) return "hospital_admin";
+  return ws.memberships.find((m) => m.hospital_id === hospitalId)?.role ?? null;
 }
 
 export interface HospitalData {
@@ -57,7 +70,7 @@ export async function loadHospital(b: Backend, hospital: Hospital, role: Role): 
   const hid = hospital.id;
   const [members, invites, items, carts, drawers, cartItems, checks] = await Promise.all([
     b.select("memberships", { hospital_id: hid }, { order: { column: "email" } }),
-    role === "hospital_admin" ? b.select("invites", { hospital_id: hid }) : Promise.resolve([] as Invite[]),
+    (await b.isSuperAdmin()) ? b.select("invites", { hospital_id: hid }) : Promise.resolve([] as Invite[]),
     b.select("items", { hospital_id: hid }, { order: { column: "name" } }),
     b.select("carts", { hospital_id: hid }, { order: { column: "name" } }),
     b.select("drawers", { hospital_id: hid }, { order: { column: "sort_order" } }),
@@ -445,6 +458,7 @@ export function toCsv(header: string[], rows: unknown[][]): string {
 // ------------------------------------------------------------------ demo data
 
 export const DEMO_PASSWORD = "demo1234";
+export const DEMO_SUPER = { email: "superadmin@demo.hospital", name: "Super Admin" };
 export const DEMO_USERS: { email: string; name: string; role: Role }[] = [
   { email: "admin@demo.hospital", name: "Aisha Rahman", role: "hospital_admin" },
   { email: "nurse@demo.hospital", name: "Omar Khalid", role: "nurse" },
@@ -453,22 +467,25 @@ export const DEMO_USERS: { email: string; name: string; role: Role }[] = [
 ];
 
 /** Builds two demo hospitals with carts, staff and a few checks. */
-export async function seedDemo(b: Backend, today = todayISO()) {
-  // Staff accounts first, so the admin's invites turn into memberships.
+export async function seedDemo(b: Backend & { addSuperAdmin(email: string): void }, today = todayISO()) {
   for (const u of DEMO_USERS) await b.signUp(u.email, DEMO_PASSWORD, u.name);
-  await b.signIn(DEMO_USERS[0].email, DEMO_PASSWORD);
+  b.addSuperAdmin(DEMO_SUPER.email);
+  await b.signUp(DEMO_SUPER.email, DEMO_PASSWORD, DEMO_SUPER.name);
 
   // A spread of expiry dates: a few expired, some due soon, most fine.
   const offsets = [-12, 9, 21, 45, 160, 300, 420, 610];
   const expiryFor = (i: number) => (i % 7 === 3 ? null : addDays(today, offsets[(i * 5) % offsets.length]));
   const general = await createHospital(b, { name: "City General Hospital", code: "CGH", starterCarts: true }, expiryFor);
-  await createHospital(b, { name: "Riverside Children's Hospital", code: "RCH", starterCarts: true }, (i) => addDays(today, 30 + ((i * 37) % 500)));
+  const riverside = await createHospital(b, { name: "Riverside Children's Hospital", code: "RCH", starterCarts: true }, (i) => addDays(today, 30 + ((i * 37) % 500)));
 
+  // The Super admin gives each person their rights.
   const ws = await loadWorkspace(b);
   const h = ws!.hospitals.find((x) => x.id === general)!;
   let d = await loadHospital(b, h, "hospital_admin");
-  for (const u of DEMO_USERS.slice(1)) await inviteMember(b, d, u.email, u.role);
-  for (const u of DEMO_USERS.slice(1)) {
+  for (const u of DEMO_USERS) await inviteMember(b, d, u.email, u.role);
+  const r = await loadHospital(b, ws!.hospitals.find((x) => x.id === riverside)!, "hospital_admin");
+  await inviteMember(b, r, DEMO_USERS[0].email, "hospital_admin");
+  for (const u of DEMO_USERS) {
     await b.signIn(u.email, DEMO_PASSWORD);
     await b.acceptInvites();
   }

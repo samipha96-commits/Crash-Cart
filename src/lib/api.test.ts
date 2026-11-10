@@ -14,8 +14,7 @@ async function seeded() {
 async function hospitalFor(b: ReturnType<typeof createLocalBackend>, code: string) {
   const ws = (await api.loadWorkspace(b))!;
   const h = ws.hospitals.find((x) => x.code === code)!;
-  const m = ws.memberships.find((x) => x.hospital_id === h.id)!;
-  return { ws, d: await api.loadHospital(b, h, m.role) };
+  return { ws, d: await api.loadHospital(b, h, api.roleFor(ws, h.id)!) };
 }
 
 describe("dates", () => {
@@ -32,6 +31,7 @@ describe("demo hospitals", () => {
   it("seeds two hospitals, three carts each, with four floors", async () => {
     const b = await seeded();
     const { ws, d } = await hospitalFor(b, "CGH");
+    expect(ws.isSuper).toBe(false);
     expect(ws.hospitals.map((h) => h.code).sort()).toEqual(["CGH", "RCH"]);
     expect(d.carts).toHaveLength(3);
     expect(d.drawers).toHaveLength(12);
@@ -112,9 +112,31 @@ describe("checks workflow", () => {
   });
 });
 
-describe("team", () => {
-  it("invites by email and joins on next sign-in", async () => {
+describe("super admin", () => {
+  it("is the only one who can create hospitals", async () => {
     const b = await seeded();
+    await expect(api.createHospital(b, { name: "Rogue Clinic", code: "RC", starterCarts: false })).rejects.toThrow(/Super admin/);
+    await b.signIn(api.DEMO_SUPER.email, api.DEMO_PASSWORD);
+    const ws = (await api.loadWorkspace(b))!;
+    expect(ws.isSuper).toBe(true);
+    expect(ws.hospitals).toHaveLength(2);
+    await api.createHospital(b, { name: "North Clinic", code: "NC", starterCarts: false });
+    expect((await api.loadWorkspace(b))!.hospitals).toHaveLength(3);
+  });
+
+  it("is the only one who can give or change rights", async () => {
+    const b = await seeded();
+    const { d } = await hospitalFor(b, "CGH");
+    expect(d.role).toBe("hospital_admin");
+    await expect(api.inviteMember(b, d, "someone@cgh.org", "nurse")).rejects.toThrow(/Super admin/);
+    const nurse = d.members.find((m) => m.role === "nurse")!;
+    await expect(api.changeRole(b, nurse.id, "hospital_admin")).rejects.toThrow(/Super admin/);
+    await expect(api.removeMember(b, nurse.id)).rejects.toThrow(/Super admin/);
+  });
+
+  it("adds people by email and they join on next sign-in", async () => {
+    const b = await seeded();
+    await b.signIn(api.DEMO_SUPER.email, api.DEMO_PASSWORD);
     const { d } = await hospitalFor(b, "RCH");
     await api.inviteMember(b, d, "New.Nurse@Riverside.org", "nurse");
     await b.signUp("new.nurse@riverside.org", "secret12", "New Nurse");

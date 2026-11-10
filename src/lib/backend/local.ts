@@ -14,6 +14,8 @@ interface DemoUser extends User {
 interface DemoDb {
   version: 1;
   users: DemoUser[];
+  /** Emails of Super admins (the platform owner). */
+  superEmails: string[];
   sessionUserId: string | null;
   tables: { [K in TableName]: Tables[K][] };
 }
@@ -28,8 +30,8 @@ export const DEMO_KEY = "crash-cart-demo-v1";
 const ALL: Role[] = ["hospital_admin", "pharmacy", "nurse", "quality", "manager"];
 const WRITE_RULES: Record<TableName, Role[] | null> = {
   hospitals: ["hospital_admin"],
-  memberships: ["hospital_admin"],
-  invites: ["hospital_admin"],
+  memberships: [],
+  invites: [],
   items: ["hospital_admin", "pharmacy"],
   carts: ["hospital_admin"],
   drawers: ["hospital_admin"],
@@ -64,6 +66,7 @@ function emptyDb(): DemoDb {
   return {
     version: 1,
     users: [],
+    superEmails: [],
     sessionUserId: null,
     tables: {
       hospitals: [],
@@ -90,7 +93,7 @@ function matches(row: Record<string, unknown>, filter: Filter = {}): boolean {
   );
 }
 
-export function createLocalBackend(store?: KeyValueStore): Backend & { reset(): void; isEmpty(): boolean } {
+export function createLocalBackend(store?: KeyValueStore): Backend & { reset(): void; isEmpty(): boolean; addSuperAdmin(email: string): void } {
   const kv: KeyValueStore =
     store ?? (typeof localStorage !== "undefined" ? localStorage : memoryStore());
   const listeners = new Set<() => void>();
@@ -100,7 +103,7 @@ export function createLocalBackend(store?: KeyValueStore): Backend & { reset(): 
       const raw = kv.getItem(DEMO_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as DemoDb;
-        if (parsed.version === 1) return parsed;
+        if (parsed.version === 1 && Array.isArray(parsed.superEmails)) return parsed;
       }
     } catch {
       /* corrupted or blocked storage: start fresh */
@@ -124,9 +127,16 @@ export function createLocalBackend(store?: KeyValueStore): Backend & { reset(): 
     return u;
   }
 
+  function isSuper(): boolean {
+    const u = db.users.find((x) => x.id === db.sessionUserId);
+    return !!u && db.superEmails.includes(u.email);
+  }
+
+  /** The caller's role in a hospital. The Super admin counts as admin everywhere. */
   function roleIn(hospitalId: string | undefined): Role | null {
     const u = db.users.find((x) => x.id === db.sessionUserId);
     if (!u || !hospitalId) return null;
+    if (isSuper()) return db.tables.hospitals.some((h) => h.id === hospitalId) ? "hospital_admin" : null;
     return db.tables.memberships.find((m) => m.hospital_id === hospitalId && m.user_id === u.id)?.role ?? null;
   }
 
@@ -135,6 +145,10 @@ export function createLocalBackend(store?: KeyValueStore): Backend & { reset(): 
   }
 
   function assertWrite(table: TableName, row: Record<string, unknown>) {
+    if (table === "memberships" || table === "invites") {
+      if (!isSuper()) throw new PermissionError("Only the Super admin can give or change staff rights.");
+      return;
+    }
     const role = roleIn(hospitalOf(table, row));
     const allowed = WRITE_RULES[table] ?? ALL;
     if (!role || !allowed.includes(role)) throw new PermissionError("Your role cannot do that.");
@@ -182,6 +196,12 @@ export function createLocalBackend(store?: KeyValueStore): Backend & { reset(): 
 
   return {
     mode: "demo",
+
+    /** Demo only: mark an email as Super admin (the real app uses the super_admins table). */
+    addSuperAdmin(email: string) {
+      db.superEmails.push(email.trim().toLowerCase());
+      save();
+    },
 
     reset() {
       db = emptyDb();
@@ -236,7 +256,7 @@ export function createLocalBackend(store?: KeyValueStore): Backend & { reset(): 
         (r) => roleIn(hospitalOf(table, r)) !== null,
       );
       rows = rows.filter((r) => matches(r, filter));
-      if (table === "invites") rows = rows.filter((r) => roleIn(r.hospital_id as string) === "hospital_admin");
+      if (table === "invites" && !isSuper()) rows = [];
       if (opts?.order) {
         const { column, ascending = true } = opts.order;
         rows = [...rows].sort((a, b) => {
@@ -292,8 +312,6 @@ export function createLocalBackend(store?: KeyValueStore): Backend & { reset(): 
         } else {
           assertWrite(table, r);
           if (table === "check_lines") guardLine(r as never);
-          if (table === "memberships" && r.user_id === user.id)
-            throw new PermissionError("You cannot remove yourself.");
         }
         doomed.push(r.id as string);
       }
@@ -302,8 +320,13 @@ export function createLocalBackend(store?: KeyValueStore): Backend & { reset(): 
       save();
     },
 
+    async isSuperAdmin() {
+      return isSuper();
+    },
+
     async createHospital(id, name, code) {
       const user = me();
+      if (!isSuper()) throw new PermissionError("Only the Super admin can create hospitals.");
       if (name.trim().length < 2 || code.trim().length < 2) throw new Error("Name and short code are required.");
       db.tables.hospitals.push({
         id,
@@ -311,15 +334,6 @@ export function createLocalBackend(store?: KeyValueStore): Backend & { reset(): 
         code: code.trim().toUpperCase(),
         near_expiry_days: 30,
         created_by: user.id,
-        created_at: new Date().toISOString(),
-      });
-      db.tables.memberships.push({
-        id: crypto.randomUUID(),
-        hospital_id: id,
-        user_id: user.id,
-        email: user.email,
-        name: user.name,
-        role: "hospital_admin",
         created_at: new Date().toISOString(),
       });
       save();

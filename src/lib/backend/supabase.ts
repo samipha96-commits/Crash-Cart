@@ -80,6 +80,11 @@ export function createSupabaseBackend(url: string, key: string): Backend {
       check(await applyFilter(sb.from(table).delete(), filter));
     },
 
+    async isSuperAdmin() {
+      const res = await sb.rpc("is_super_admin");
+      return !res.error && res.data === true;
+    },
+
     async createHospital(id, name, code) {
       check(await sb.rpc("create_hospital", { p_id: id, p_name: name, p_code: code }));
     },

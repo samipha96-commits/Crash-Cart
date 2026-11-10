@@ -34,7 +34,7 @@ export function MorePage() {
         <div>
           <h1>More</h1>
           <p>
-            Signed in as {ws.user.name || ws.user.email} · {ROLE_LABEL[data.role]}
+            Signed in as {ws.user.name || ws.user.email} · {ws.isSuper ? "Super admin" : ROLE_LABEL[data.role]}
           </p>
         </div>
       </div>
@@ -52,7 +52,7 @@ export function MorePage() {
           <Icon.users />
           <div className="list-main">
             <div className="t">Staff</div>
-            <div className="s">People, roles and invites</div>
+            <div className="s">{ws.isSuper ? "Give people access and set their roles" : "People and roles"}</div>
           </div>
           <Icon.chevron />
         </a>
@@ -60,9 +60,11 @@ export function MorePage() {
 
       <div className="section-title">
         <h2>Hospitals</h2>
-        <button className="btn small" onClick={() => setCreating(true)}>
-          <Icon.plus /> New hospital
-        </button>
+        {ws.isSuper && (
+          <button className="btn small" onClick={() => setCreating(true)}>
+            <Icon.plus /> New hospital
+          </button>
+        )}
       </div>
       <div className="card list">
         {ws.hospitals.map((h) => {
@@ -72,7 +74,7 @@ export function MorePage() {
               <div className="list-main">
                 <div className="t">{h.name}</div>
                 <div className="s">
-                  {h.code} · {m ? ROLE_LABEL[m.role] : ""}
+                  {h.code} · {ws.isSuper ? "Super admin" : m ? ROLE_LABEL[m.role] : ""}
                 </div>
               </div>
               {h.id === data.hospital.id ? <span className="badge primary">Current</span> : <Icon.chevron />}
@@ -192,7 +194,7 @@ function EmbeddedOnboarding({ onDone }: { onDone: (id: string) => void }) {
       }}
     >
       <p className="muted small" style={{ marginTop: -6 }}>
-        You'll be the admin of the new hospital. Its carts, checks and staff are kept separate from your other hospitals.
+        Its carts, checks and staff are kept separate from other hospitals. Afterwards, add its hospital admin from Staff &amp; rights.
       </p>
       <Field label="Hospital name">
         <input className="input" value={name} onChange={(e) => setName(e.target.value)} required />

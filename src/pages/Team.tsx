@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useApp } from "../lib/app-context";
 import * as api from "../lib/api";
-import { ROLES, ROLE_HELP, ROLE_LABEL, can } from "../lib/catalog";
+import { ROLES, ROLE_HELP, ROLE_LABEL } from "../lib/catalog";
 import type { Role } from "../lib/types";
 import { Icon } from "../components/icons";
 import { Field, Sheet } from "../components/ui";
@@ -9,14 +9,18 @@ import { Field, Sheet } from "../components/ui";
 export function TeamPage() {
   const { data, ws, backend, run } = useApp();
   const [inviting, setInviting] = useState(false);
-  const admin = can.manageHospital(data.role);
+  // Only the Super admin gives people access or changes their rights.
+  const admin = ws.isSuper;
 
   return (
     <div className="page">
       <div className="page-head">
         <div>
           <h1>Staff</h1>
-          <p>Who can use Crash Cart at {data.hospital.name}, and what they can do.</p>
+          <p>
+            Who can use Crash Cart at {data.hospital.name}, and what they can do.
+            {!admin && " Only the Super admin can add people or change their rights."}
+          </p>
         </div>
         {admin && (
           <button className="btn primary" onClick={() => setInviting(true)}>
@@ -26,6 +30,7 @@ export function TeamPage() {
       </div>
 
       <div className="card list">
+        {data.members.length === 0 && <div className="empty">No staff yet.{admin ? " Invite the hospital admin first." : ""}</div>}
         {data.members.map((m) => (
           <div key={m.id} className="list-item">
             <div className="list-main">
@@ -106,6 +111,7 @@ export function TeamPage() {
 
 function InviteSheet({ onClose }: { onClose: () => void }) {
   const { data, backend, run, toast } = useApp();
+  // Super admin only (enforced by the database too).
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<Role>("nurse");
   return (

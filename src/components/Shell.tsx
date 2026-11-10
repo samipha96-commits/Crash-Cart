@@ -22,7 +22,7 @@ export function Shell({ children }: { children: ReactNode }) {
   ];
   const extra = [
     { href: "/items", label: "Item list", icon: <Icon.pill /> },
-    { href: "/team", label: "Staff", icon: <Icon.users /> },
+    { href: "/team", label: ws.isSuper ? "Staff & rights" : "Staff", icon: <Icon.users /> },
     { href: "/more", label: "Settings", icon: <Icon.settings /> },
   ];
 
@@ -64,7 +64,7 @@ export function Shell({ children }: { children: ReactNode }) {
           <div className="strong" style={{ color: "var(--ink)" }}>
             {ws.user.name || ws.user.email}
           </div>
-          <div>{ROLE_LABEL[data.role]}</div>
+          <div>{ws.isSuper ? "Super admin" : ROLE_LABEL[data.role]}</div>
           <button className="btn ghost small" style={{ padding: 0, marginTop: 6 }} onClick={() => void backend.signOut()}>
             <Icon.logout /> Sign out
           </button>
@@ -80,7 +80,7 @@ export function Shell({ children }: { children: ReactNode }) {
             <BrandMark />
           </div>
           <div style={{ minWidth: 0, flex: 1, display: "flex" }}>{picker}</div>
-          <span className="badge primary">{ROLE_LABEL[data.role]}</span>
+          <span className="badge primary">{ws.isSuper ? "Super admin" : ROLE_LABEL[data.role]}</span>
         </header>
         {children}
       </div>

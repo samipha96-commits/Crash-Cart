@@ -28,7 +28,9 @@ export interface Backend {
   update<T extends TableName>(table: T, filter: Filter, patch: Partial<Tables[T]>): Promise<void>;
   remove<T extends TableName>(table: T, filter: Filter): Promise<void>;
 
-  /** Creates the hospital and makes the caller its first hospital admin. */
+  /** True when the signed-in user is the platform Super admin. */
+  isSuperAdmin(): Promise<boolean>;
+  /** Creates a hospital. Super admin only. */
   createHospital(id: string, name: string, code: string): Promise<void>;
   /** Turns invites for the caller's email into memberships. */
   acceptInvites(): Promise<number>;

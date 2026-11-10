@@ -18,11 +18,12 @@ pharmacist covering two sites) and switch between them.
   window (30 days by default). Pharmacy updates the date and lot when they replace stock.
 - **Dashboard.** Carts due a daily check, checks waiting for review, expired and expiring items.
 - **Reports.** CSV export and print view for any check and for the expiry list.
-- **Roles.**
+- **Roles.** A single **Super admin** (the platform owner) is the only one who can create hospitals
+  and give anyone access or change their role. Inside each hospital:
 
   | Role | Can do |
   | --- | --- |
-  | Hospital admin | Everything: carts, item list, staff, checks, review |
+  | Hospital admin | Carts, item list, checks, review, hospital settings (not staff rights) |
   | Pharmacy | Restock carts (quantities, lots, expiry dates), maintain the item list, run checks |
   | Nurse | Run checks |
   | Quality | Run checks, review and close them |
@@ -37,8 +38,8 @@ npm test           # logic tests
 npm run build      # production build in dist/
 ```
 
-With no configuration the app runs in **Demo mode**: two sample hospitals and four sample staff
-accounts, stored in the browser only. Use it to try the app; nothing is shared between devices.
+With no configuration the app runs in **Demo mode**: a Super admin, two sample hospitals and four
+sample staff accounts, stored in the browser only. Use it to try the app; nothing is shared between devices.
 
 ## Connect a real database (shared between devices and hospitals)
 
@@ -51,9 +52,15 @@ The app uses [Supabase](https://supabase.com) (hosted Postgres with sign-in) for
 3. Copy `.env.example` to `.env.local` and fill in the project URL and anon (publishable) key from
    *Project settings → API*.
 4. In *Authentication → URL configuration*, add the address where you host the app.
+5. Sign up in the app with the email you'll use as Super admin and confirm it, then in the SQL editor run:
 
-The first person to sign up creates their hospital and becomes its admin. They invite staff by email
-from the **Staff** screen; invited people join automatically when they sign up or sign in with that email.
+   ```sql
+   insert into super_admins (email) values ('you@example.org');
+   ```
+
+The Super admin creates each hospital and adds staff by email with their role from **Staff & rights**.
+People join automatically when they sign up or sign in with that email. Anyone else who signs up sees
+"Waiting for access" and can do nothing until the Super admin adds them.
 
 ## Put it online
 

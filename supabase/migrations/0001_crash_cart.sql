@@ -5,8 +5,12 @@
 -- the action. Users of one hospital can never read or change another
 -- hospital's carts, checks or staff.
 --
--- Roles
---   hospital_admin  everything: carts, item catalogue, staff, checks, review
+-- Super admin (platform owner, listed in the super_admins table)
+--   the only one who can create hospitals and give anyone a role; has full
+--   access to every hospital.
+--
+-- Roles inside a hospital
+--   hospital_admin  carts, item catalogue, checks, review (not staff rights)
 --   pharmacy        restock carts (quantities, lot, expiry) and run checks
 --   nurse           run checks
 --   quality         run checks, review and close checks
@@ -15,6 +19,14 @@
 create extension if not exists pgcrypto;
 
 -- ---------------------------------------------------------------- tables
+
+-- Super admins, by sign-in email. Add yours after running this file:
+--   insert into super_admins (email) values ('you@example.org');
+-- The account must have a confirmed email to count.
+create table if not exists super_admins (
+  email text primary key check (email = lower(trim(email))),
+  created_at timestamptz not null default now()
+);
 
 create table if not exists hospitals (
   id uuid primary key default gen_random_uuid(),
@@ -141,11 +153,23 @@ create index if not exists check_lines_check_idx on check_lines (check_id);
 
 -- ---------------------------------------------------------------- helpers
 
-create or replace function has_role(hid uuid, roles text[] default null)
+create or replace function is_super_admin()
 returns boolean
 language sql stable security definer set search_path = public
 as $$
   select exists (
+    select 1 from super_admins s
+    join auth.users u on lower(u.email) = s.email
+    where u.id = auth.uid() and u.email_confirmed_at is not null
+  );
+$$;
+
+-- Super admins pass every role check in every hospital.
+create or replace function has_role(hid uuid, roles text[] default null)
+returns boolean
+language sql stable security definer set search_path = public
+as $$
+  select is_super_admin() or exists (
     select 1 from memberships m
     where m.hospital_id = hid
       and m.user_id = auth.uid()
@@ -153,21 +177,18 @@ as $$
   );
 $$;
 
--- Create a hospital and make the caller its first admin.
+-- Create a hospital. Super admin only.
 create or replace function create_hospital(p_name text, p_code text, p_id uuid default gen_random_uuid())
 returns uuid
 language plpgsql security definer set search_path = public
 as $$
 declare
   uid uuid := auth.uid();
-  jwt_email text := lower(coalesce(auth.jwt() ->> 'email', ''));
-  jwt_name text := coalesce(auth.jwt() -> 'user_metadata' ->> 'name', '');
 begin
   if uid is null then raise exception 'Sign in first.'; end if;
+  if not is_super_admin() then raise exception 'Only the Super admin can create hospitals.'; end if;
   insert into hospitals (id, name, code, created_by)
     values (p_id, trim(p_name), upper(trim(p_code)), uid);
-  insert into memberships (hospital_id, user_id, email, name, role)
-    values (p_id, uid, jwt_email, jwt_name, 'hospital_admin');
   return p_id;
 end;
 $$;
@@ -194,6 +215,7 @@ begin
 end;
 $$;
 
+grant execute on function is_super_admin() to authenticated;
 grant execute on function has_role(uuid, text[]) to authenticated;
 grant execute on function create_hospital(text, text, uuid) to authenticated;
 grant execute on function accept_invites() to authenticated;
@@ -247,6 +269,8 @@ create trigger check_lines_guard before update or delete on check_lines
 
 -- ---------------------------------------------------------------- policies
 
+alter table super_admins enable row level security;  -- no policies: managed in SQL only
+revoke all on super_admins from anon, authenticated;
 alter table hospitals enable row level security;
 alter table memberships enable row level security;
 alter table invites enable row level security;
@@ -263,21 +287,24 @@ create policy hospitals_read on hospitals for select using (has_role(id));
 drop policy if exists hospitals_admin on hospitals;
 create policy hospitals_admin on hospitals for update
   using (has_role(id, array['hospital_admin'])) with check (has_role(id, array['hospital_admin']));
+drop policy if exists hospitals_super_delete on hospitals;
+create policy hospitals_super_delete on hospitals for delete using (is_super_admin());
 
--- memberships: members see the team; admins manage roles and remove people.
+-- memberships: members see the team; only the Super admin gives or changes rights.
 drop policy if exists memberships_read on memberships;
 create policy memberships_read on memberships for select using (has_role(hospital_id));
 drop policy if exists memberships_admin_update on memberships;
-create policy memberships_admin_update on memberships for update
-  using (has_role(hospital_id, array['hospital_admin'])) with check (has_role(hospital_id, array['hospital_admin']));
+drop policy if exists memberships_super_update on memberships;
+create policy memberships_super_update on memberships for update
+  using (is_super_admin()) with check (is_super_admin());
 drop policy if exists memberships_admin_delete on memberships;
-create policy memberships_admin_delete on memberships for delete
-  using (has_role(hospital_id, array['hospital_admin']) and user_id <> auth.uid());
+drop policy if exists memberships_super_delete on memberships;
+create policy memberships_super_delete on memberships for delete using (is_super_admin());
 
--- invites: admins only.
+-- invites: Super admin only.
 drop policy if exists invites_admin on invites;
-create policy invites_admin on invites for all
-  using (has_role(hospital_id, array['hospital_admin'])) with check (has_role(hospital_id, array['hospital_admin']));
+drop policy if exists invites_super on invites;
+create policy invites_super on invites for all using (is_super_admin()) with check (is_super_admin());
 
 -- item catalogue: members read; admins and pharmacy maintain.
 drop policy if exists items_read on items;
