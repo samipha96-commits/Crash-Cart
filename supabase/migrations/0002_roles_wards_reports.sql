@@ -17,6 +17,10 @@
 alter table hospitals add column if not exists theme jsonb not null default '{}'::jsonb;
 alter table hospitals add column if not exists logo_url text not null default ''
   check (length(logo_url) <= 400000);
+-- Hospital details printed in the header of every report.
+alter table hospitals add column if not exists address text not null default '';
+alter table hospitals add column if not exists phone text not null default '';
+alter table hospitals add column if not exists email text not null default '';
 
 alter table memberships add column if not exists ward_ids uuid[] not null default '{}';
 alter table invites add column if not exists ward_ids uuid[] not null default '{}';

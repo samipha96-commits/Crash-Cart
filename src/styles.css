@@ -1186,3 +1186,76 @@ html[data-nav="dark"] .topbar .badge.primary {
 .mini .tile {
   background: #fff;
 }
+
+/* ---------------------------------------------------------------- report letterhead */
+.report-head {
+  margin-bottom: 14px;
+  overflow: hidden;
+  border-top: 4px solid var(--primary);
+}
+.report-letterhead {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 16px;
+  align-items: center;
+  padding: 18px 18px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.report-logo {
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+  border-radius: 12px;
+}
+.report-logo-text {
+  display: grid;
+  place-items: center;
+  background: var(--primary);
+  color: var(--primary-ink);
+  font-weight: 700;
+}
+.report-hospital-name {
+  font-family: var(--display, inherit);
+  font-size: 1.35rem;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-bottom: 2px;
+}
+.report-title {
+  text-align: right;
+}
+.report-kicker {
+  color: var(--primary);
+  font-weight: 700;
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.report-period {
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin: 2px 0;
+}
+.report-wards {
+  min-width: 520px;
+}
+.report-wards td,
+.report-wards th {
+  vertical-align: top;
+}
+@media (max-width: 640px) {
+  .report-letterhead {
+    grid-template-columns: auto 1fr;
+  }
+  .report-title {
+    grid-column: 1 / -1;
+    text-align: left;
+  }
+}
+@media print {
+  .report-head {
+    box-shadow: none;
+    border: 1px solid #999;
+    border-top: 4px solid var(--primary);
+  }
+}

@@ -59,6 +59,10 @@ export interface Hospital {
   theme: HospitalTheme;
   /** Logo as a small data: URL (or https URL); empty when none. */
   logo_url: string;
+  /** Shown in the header of every report. */
+  address: string;
+  phone: string;
+  email: string;
   created_by: string;
   created_at: string;
 }

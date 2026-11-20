@@ -14,7 +14,14 @@ interface InstallPrompt extends Event {
 
 export function MorePage() {
   const { data, ws, backend, run, switchHospital, toast } = useApp();
-  const [settings, setSettings] = useState({ name: data.hospital.name, code: data.hospital.code, days: data.hospital.near_expiry_days });
+  const [settings, setSettings] = useState({
+    name: data.hospital.name,
+    code: data.hospital.code,
+    days: data.hospital.near_expiry_days,
+    address: data.hospital.address ?? "",
+    phone: data.hospital.phone ?? "",
+    email: data.hospital.email ?? "",
+  });
   const [creating, setCreating] = useState(false);
   const [install, setInstall] = useState<InstallPrompt | null>(null);
   const admin = can.manageHospital(data.perm);
@@ -116,7 +123,13 @@ export function MorePage() {
             onSubmit={(e) => {
               e.preventDefault();
               void run(
-                () => api.updateHospital(backend, data.hospital.id, { name: settings.name.trim(), code: settings.code.trim().toUpperCase(), near_expiry_days: Math.min(365, Math.max(1, settings.days)) }),
+                () =>
+                  api.updateHospital(backend, data.hospital.id, {
+                    name: settings.name.trim(),
+                    code: settings.code.trim().toUpperCase(),
+                    near_expiry_days: Math.min(365, Math.max(1, settings.days)),
+                    ...api.cleanDetails(settings),
+                  }),
                 "Settings saved",
               );
             }}
@@ -127,6 +140,17 @@ export function MorePage() {
               </Field>
               <Field label="Short code">
                 <input className="input" value={settings.code} onChange={(e) => setSettings({ ...settings, code: e.target.value })} />
+              </Field>
+            </div>
+            <Field label="Address" hint="Shown with the logo at the top of every report.">
+              <input className="input" value={settings.address} onChange={(e) => setSettings({ ...settings, address: e.target.value })} placeholder="Street, city" />
+            </Field>
+            <div className="grid cols-2">
+              <Field label="Phone">
+                <input className="input" type="tel" value={settings.phone} onChange={(e) => setSettings({ ...settings, phone: e.target.value })} />
+              </Field>
+              <Field label="Email">
+                <input className="input" type="email" value={settings.email} onChange={(e) => setSettings({ ...settings, email: e.target.value })} placeholder="pharmacy@hospital.org" />
               </Field>
             </div>
             <Field label="Warn about expiry this many days ahead" hint="Items inside this window show as “expiring” and are flagged during checks.">

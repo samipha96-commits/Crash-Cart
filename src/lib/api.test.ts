@@ -4,6 +4,7 @@ import { createLocalBackend } from "./backend/local";
 import { addDays, daysUntil, expiryState } from "./dates";
 import * as rep from "./reports";
 import { reportWorkbook } from "./xlsx-report";
+import { reportCsv, reportFileName, reportPdf } from "./report-export";
 
 const TODAY = "2026-11-20";
 const MONTH = "2026-11";
@@ -48,7 +49,7 @@ describe("demo hospitals", () => {
     expect(d.hospital.theme.preset).toBe("teal");
     expect(d.carts).toHaveLength(3);
     expect(d.drawers).toHaveLength(12);
-    expect(d.members).toHaveLength(7);
+    expect(d.members).toHaveLength(9);
   });
 
   it("blocks a stranger from another hospital's data", async () => {
@@ -258,8 +259,25 @@ describe("reports", () => {
     const [, , oct, nov] = multi.cells[ward].map((c) => c.metrics!.availabilityPct);
     expect(nov).toBeLessThanOrEqual(oct);
 
-    const blob = await reportWorkbook(multi, d.hospital.name);
+    const meta = rep.reportMeta(multi, d.hospital, d.members, d.invites, "Yusuf Ali");
+    const icu = meta.wards.find((w) => w.cart.cart_type === "ICU")!;
+    expect(icu.nurses).toEqual(["Omar Khalid"]);
+    expect(icu.audits).toHaveLength(4);
+    expect(meta.hospital).toMatchObject({ name: "City General Hospital", address: expect.stringContaining("Hospital Road") });
+    expect(meta.hospital.logo_url).toMatch(/^data:image\/svg\+xml/);
+
+    const blob = await reportWorkbook(multi, meta);
     expect(blob.size).toBeGreaterThan(5000);
+
+    const csv = reportCsv(multi, meta);
+    expect(csv).toContain("City General Hospital (CGH)");
+    expect(csv).toContain("Nurse responsible");
+    expect(csv).toMatch(/ICU,ICU Crash Cart,Omar Khalid,/);
+    expect(csv).toContain("PERFORMANCE COMPARISON");
+    expect(reportFileName(multi, "CGH", "csv")).toBe("CRASH AUDIT AUG 2026 - NOV 2026 CGH.csv");
+
+    const pdf = await reportPdf(multi, meta);
+    expect(pdf.size).toBeGreaterThan(5000);
   });
 
   it("limits a pharmacist's report to their wards", async () => {

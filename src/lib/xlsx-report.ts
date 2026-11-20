@@ -16,8 +16,10 @@ import {
   wardName,
   type Metrics,
   type Report,
+  type ReportMeta,
   type WardMonth,
 } from "./reports";
+import { hospitalLines } from "./report-export";
 
 /**
  * Excel export in the layout of the hospital's audit workbooks:
@@ -90,13 +92,63 @@ function summaryBlock(ws: Worksheet, row: number, col: number, cell: WardMonth, 
   return 12;
 }
 
-function summarySheet(wb: import("exceljs").Workbook, report: Report, title: string) {
+/** Report header: logo, hospital details, title, period, then each ward's cart, nurse and audits. Returns the next free row. */
+function headerBlock(wb: import("exceljs").Workbook, ws: Worksheet, meta: ReportMeta, logo: { data: string; w: number; h: number } | null): number {
+  const multi = meta.wards.some((w) => w.audits.length > 1);
+  if (logo) {
+    const id = wb.addImage({ base64: logo.data, extension: "png" });
+    const k = 72 / Math.max(logo.w, logo.h);
+    ws.addImage(id, { tl: { col: 1, row: 0.3 }, ext: { width: logo.w * k, height: logo.h * k } });
+  }
+  const col = logo ? 3 : 2;
+  ws.getCell(1, col).value = meta.hospital.name.toUpperCase();
+  ws.getCell(1, col).font = { bold: true, size: 16, color: { argb: "FF1F4E79" } };
+  ws.getCell(2, col).value = [`Code ${meta.hospital.code}`, ...hospitalLines(meta)].join(" · ");
+  ws.getCell(2, col).font = { color: { argb: "FF595959" } };
+  ws.getCell(3, col).value = [meta.title.toUpperCase(), meta.subtitle, meta.period].filter(Boolean).join(" · ");
+  ws.getCell(3, col).font = { bold: true, size: 12 };
+  ws.getCell(4, col).value = `Prepared by ${meta.preparedBy} on ${meta.preparedOn}`;
+  ws.getCell(4, col).font = { italic: true, size: 9, color: { argb: "FF595959" } };
+  ws.getRow(1).height = 22;
+
+  let row = 6;
+  const head = ["WARD", "CRASH CART", "NURSE RESPONSIBLE", "AUDIT PERFORMED"];
+  const cols = [2, 3, 4, 9];
+  head.forEach((h, i) => {
+    const cell = ws.getCell(row, cols[i]);
+    cell.value = h;
+    cell.font = { bold: true };
+    cell.fill = HEAD;
+    cell.border = BOX;
+  });
+  ws.mergeCells(row, 4, row, 8);
+  ws.mergeCells(row, 9, row, 11);
+  row++;
+  for (const w of meta.wards) {
+    const audits = w.audits.length ? w.audits.map((a) => `${multi ? `${monthShort(a.month)}: ` : ""}${a.date} by ${a.by}`).join("\n") : "No audit";
+    const vals = [wardName(w.cart), w.cart.name, w.nurses.join(", ") || "Not assigned", audits];
+    vals.forEach((v, i) => {
+      const cell = ws.getCell(row, cols[i]);
+      cell.value = v;
+      cell.border = BOX;
+      cell.alignment = { wrapText: true, vertical: "top" };
+    });
+    ws.mergeCells(row, 4, row, 8);
+    ws.mergeCells(row, 9, row, 11);
+    if (w.audits.length > 1) ws.getRow(row).height = 15 * w.audits.length;
+    row++;
+  }
+  return row + 1;
+}
+
+function summarySheet(wb: import("exceljs").Workbook, report: Report, title: string, meta: ReportMeta, logo: { data: string; w: number; h: number } | null) {
   const ws = wb.addWorksheet("percentage summary");
-  ws.columns = [{ width: 3 }, { width: 30 }, { width: 10 }, { width: 14 }, { width: 3 }, { width: 3 }, { width: 3 }, { width: 3 }, { width: 30 }, { width: 10 }, { width: 14 }];
-  ws.mergeCells("B3:F3");
-  ws.getCell("B3").value = title;
-  ws.getCell("B3").font = { bold: true, size: 14 };
-  ws.getCell("B3").fill = TITLE;
+  ws.columns = [{ width: 3 }, { width: 30 }, { width: 16 }, { width: 14 }, { width: 3 }, { width: 3 }, { width: 3 }, { width: 3 }, { width: 30 }, { width: 10 }, { width: 14 }];
+  const top = headerBlock(wb, ws, meta, logo);
+  ws.mergeCells(top, 2, top, 6);
+  ws.getCell(top, 2).value = title;
+  ws.getCell(top, 2).font = { bold: true, size: 14 };
+  ws.getCell(top, 2).fill = TITLE;
 
   const last = report.months.length - 1;
   // Overall hospital performance (all selected wards, latest month).
@@ -104,13 +156,14 @@ function summarySheet(wb: import("exceljs").Workbook, report: Report, title: str
   const prevTotal = sumMetrics(
     report.cells.map((c, i) => (last > 0 ? c[last - 1]?.metrics : report.previous[i]?.metrics) ?? null),
   );
-  ws.getCell("B4").value = total
+  const B4 = ws.getCell(top + 1, 2);
+  B4.value = total
     ? `Overall availability ${total.availabilityPct}% · score ${performanceScore(total)} (${rating(performanceScore(total))})` +
       (prevTotal ? ` · previous month ${prevTotal.availabilityPct}% (${trend(performanceScore(prevTotal), performanceScore(total))})` : "")
     : "No audits in this period.";
-  ws.getCell("B4").font = { bold: true, color: { argb: "FF1F4E79" } };
+  B4.font = { bold: true, color: { argb: "FF1F4E79" } };
 
-  let row = 6;
+  let row = top + 3;
   for (let i = 0; i < report.wards.length; i += 2) {
     const left = report.cells[i][last];
     const right = report.cells[i + 1]?.[last];
@@ -223,7 +276,7 @@ function prevOf(report: Report) {
   return shiftMonth(report.months[0], -1);
 }
 
-function wardSheet(wb: import("exceljs").Workbook, report: Report, wi: number, used: Set<string>) {
+function wardSheet(wb: import("exceljs").Workbook, report: Report, wi: number, used: Set<string>, meta: ReportMeta) {
   const cart = report.wards[wi];
   const cells = report.cells[wi];
   const multi = report.months.length > 1;
@@ -236,6 +289,9 @@ function wardSheet(wb: import("exceljs").Workbook, report: Report, wi: number, u
   const lastCol = header.length;
   ws.columns = header.map((_, i) => ({ width: [7, 60, 12, 15][i] ?? 26 }));
 
+  ws.mergeCells(1, 1, 1, 4);
+  ws.getCell("A1").value = `${meta.hospital.name} (${meta.hospital.code}) · Nurse responsible: ${meta.wards[wi]?.nurses.join(", ") || "Not assigned"}`;
+  ws.getCell("A1").font = { color: { argb: "FF1F4E79" }, bold: true };
   ws.mergeCells(2, 1, 2, 4);
   ws.getCell("A2").value = `${cart.name.toUpperCase()}`;
   ws.getCell("A2").font = { bold: true, size: 18 };
@@ -292,7 +348,11 @@ function wardSheet(wb: import("exceljs").Workbook, report: Report, wi: number, u
   }
 }
 
-export async function reportWorkbook(report: Report, hospitalName: string): Promise<Blob> {
+export async function reportWorkbook(
+  report: Report,
+  meta: ReportMeta,
+  logo: { data: string; w: number; h: number } | null = null,
+): Promise<Blob> {
   const ExcelJS = (await import("exceljs")).default;
   const wb = new ExcelJS.Workbook();
   wb.creator = "Crash Cart";
@@ -301,16 +361,10 @@ export async function reportWorkbook(report: Report, hospitalName: string): Prom
   const period = multi
     ? `${monthTitle(report.months[0])} – ${monthTitle(report.months[report.months.length - 1])}`
     : monthTitle(report.months[0]);
-  summarySheet(wb, report, `SUMMARY PERCENTAGES OF CRASH CART INSPECTION ${period} · ${hospitalName.toUpperCase()}`);
+  summarySheet(wb, report, `SUMMARY PERCENTAGES OF CRASH CART INSPECTION ${period}`, meta, logo);
   comparisonSheet(wb, report);
   const used = new Set(["PERCENTAGE SUMMARY", "PERFORMANCE COMPARISON"]);
-  report.wards.forEach((_, i) => wardSheet(wb, report, i, used));
+  report.wards.forEach((_, i) => wardSheet(wb, report, i, used, meta));
   const buf = await wb.xlsx.writeBuffer();
   return new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-}
-
-export function reportFileName(report: Report, code: string): string {
-  const first = monthTitle(report.months[0]);
-  const last = monthTitle(report.months[report.months.length - 1]);
-  return report.months.length > 1 ? `CRASH AUDIT ${first} - ${last} ${code}.xlsx` : `CRASH AUDIT ${first} ${code}.xlsx`;
 }

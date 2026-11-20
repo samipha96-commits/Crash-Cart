@@ -15,6 +15,7 @@ import {
   qtyPresent,
   rating,
   recentMonths,
+  reportMeta,
   shiftMonth,
   sumMetrics,
   trend,
@@ -23,8 +24,12 @@ import {
   type Metrics,
   type Month,
   type Report,
+  type ReportMeta,
   type Trend,
 } from "../lib/reports";
+import { downloadBlob, downloadText } from "../lib/download";
+import { hospitalLines, reportCsv, reportFileName, type ReportFormat } from "../lib/report-export";
+import { themeVars } from "../lib/theme";
 import { Icon } from "../components/icons";
 import { Empty, Field } from "../components/ui";
 
@@ -36,7 +41,7 @@ function wardFromHash(): string {
 }
 
 export function ReportsPage() {
-  const { data, backend, toast } = useApp();
+  const { data, ws, backend, toast } = useApp();
   const path = usePath();
   const p = data.perm;
   const now = currentMonth();
@@ -45,7 +50,7 @@ export function ReportsPage() {
   const [months, setMonths] = useState<Month[]>(recentMonths(now, 3));
   const [ward, setWard] = useState<string>(wardFromHash());
   const [report, setReport] = useState<Report | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<ReportFormat | null>(null);
 
   useEffect(() => setWard(wardFromHash()), [path]);
 
@@ -78,23 +83,27 @@ export function ReportsPage() {
 
   const choices = recentMonths(now, 12).reverse();
 
-  async function exportXlsx() {
-    if (!report) return;
-    setBusy(true);
+  const meta: ReportMeta | null = report
+    ? reportMeta(report, data.hospital, data.members, data.invites, ws.user.name || ws.user.email)
+    : null;
+
+  async function download(format: ReportFormat) {
+    if (!report || !meta) return;
+    setBusy(format);
     try {
-      const { reportWorkbook, reportFileName } = await import("../lib/xlsx-report");
-      const blob = await reportWorkbook(report, data.hospital.name);
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = reportFileName(report, data.hospital.code);
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+      const name = reportFileName(report, data.hospital.code, format);
+      if (format === "csv") downloadText(name, reportCsv(report, meta));
+      else if (format === "xlsx") {
+        const [{ reportWorkbook }, { logoPng }] = await Promise.all([import("../lib/xlsx-report"), import("../lib/report-export")]);
+        downloadBlob(name, await reportWorkbook(report, meta, await logoPng(data.hospital.logo_url)));
+      } else {
+        const { reportPdf } = await import("../lib/report-export");
+        downloadBlob(name, await reportPdf(report, meta, themeVars(data.hospital.theme, false)["--primary"]));
+      }
     } catch (e) {
-      toast((e as Error).message || "Export failed.", "error");
+      toast((e as Error).message || "Download failed.", "error");
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   }
 
@@ -102,9 +111,6 @@ export function ReportsPage() {
 
   return (
     <div className="page">
-      <div className="print-only">
-        <strong>{data.hospital.name}</strong> · Crash cart audit report · {period}
-      </div>
       <div className="page-head">
         <div>
           <h1>Reports</h1>
@@ -113,12 +119,18 @@ export function ReportsPage() {
             {p.isSuper || p.role === "pharmacy_manager" ? "All wards." : p.wardIds.length ? "Your wards." : "All wards."}
           </p>
         </div>
-        <div className="row wrap no-print">
-          <button className="btn primary small" disabled={!report || busy} onClick={() => void exportXlsx()}>
-            <Icon.excel /> {busy ? "Preparing…" : "Excel"}
+        <div className="row wrap no-print" role="group" aria-label="Download report">
+          <button className="btn primary small" disabled={!report || !!busy} onClick={() => void download("pdf")}>
+            <Icon.download /> {busy === "pdf" ? "Preparing…" : "PDF"}
           </button>
-          <button className="btn small" onClick={() => window.print()}>
-            <Icon.print /> Print / PDF
+          <button className="btn small" disabled={!report || !!busy} onClick={() => void download("xlsx")}>
+            <Icon.excel /> {busy === "xlsx" ? "Preparing…" : "Excel"}
+          </button>
+          <button className="btn small" disabled={!report || !!busy} onClick={() => void download("csv")}>
+            <Icon.download /> CSV
+          </button>
+          <button className="btn ghost small" onClick={() => window.print()} aria-label="Print">
+            <Icon.print />
           </button>
         </div>
       </div>
@@ -180,11 +192,82 @@ export function ReportsPage() {
         <div className="card">
           <Empty>Pick at least one month.</Empty>
         </div>
-      ) : !report ? (
+      ) : !report || !meta ? (
         <div className="muted">Loading…</div>
       ) : (
-        <ReportView report={report} />
+        <>
+          <ReportHeader meta={meta} period={period} />
+          <ReportView report={report} />
+        </>
       )}
+    </div>
+  );
+}
+
+/** The report's letterhead: logo, hospital details, title and period, then each ward's cart, nurse and audits. */
+function ReportHeader({ meta, period }: { meta: ReportMeta; period: string }) {
+  const multi = meta.wards.some((w) => w.audits.length > 1);
+  return (
+    <div className="card report-head">
+      <div className="report-letterhead">
+        {meta.hospital.logo_url ? (
+          <img className="report-logo" src={meta.hospital.logo_url} alt={`${meta.hospital.name} logo`} />
+        ) : (
+          <div className="report-logo report-logo-text">{meta.hospital.code}</div>
+        )}
+        <div className="report-hospital">
+          <div className="report-hospital-name">{meta.hospital.name}</div>
+          {hospitalLines(meta).map((l) => (
+            <div key={l} className="muted small">
+              {l}
+            </div>
+          ))}
+          <div className="muted small">Hospital code {meta.hospital.code}</div>
+        </div>
+        <div className="report-title">
+          <div className="report-kicker">
+            {meta.title}
+            {meta.subtitle && ` · ${meta.subtitle}`}
+          </div>
+          <div className="report-period">{period}</div>
+          <div className="muted small">
+            Prepared by {meta.preparedBy} · {meta.preparedOn}
+          </div>
+        </div>
+      </div>
+      <div className="table-scroll">
+        <table className="kv report-wards">
+          <thead>
+            <tr>
+              <th>Ward</th>
+              <th>Crash cart</th>
+              <th>Nurse responsible</th>
+              <th>Audit performed</th>
+            </tr>
+          </thead>
+          <tbody>
+            {meta.wards.map((w) => (
+              <tr key={w.cart.id}>
+                <td className="strong">{wardName(w.cart)}</td>
+                <td>{w.cart.name}</td>
+                <td>{w.nurses.length ? w.nurses.join(", ") : <span className="muted">Not assigned</span>}</td>
+                <td className="small">
+                  {w.audits.length ? (
+                    w.audits.map((a) => (
+                      <div key={a.month}>
+                        {multi && <strong>{monthShort(a.month)}: </strong>}
+                        {a.date} · {a.by}
+                      </div>
+                    ))
+                  ) : (
+                    <span className="muted">No audit</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

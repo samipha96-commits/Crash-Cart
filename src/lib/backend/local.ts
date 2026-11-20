@@ -25,10 +25,10 @@ export interface KeyValueStore {
   setItem(key: string, value: string): void;
 }
 
-export const DEMO_KEY = "crash-cart-demo-v3";
+export const DEMO_KEY = "crash-cart-demo-v4";
 
 const DEFAULTS: { [K in TableName]: () => Partial<Tables[K]> } = {
-  hospitals: () => ({ near_expiry_days: 30, theme: {}, logo_url: "", created_at: new Date().toISOString() }),
+  hospitals: () => ({ near_expiry_days: 30, theme: {}, logo_url: "", address: "", phone: "", email: "", created_at: new Date().toISOString() }),
   memberships: () => ({ name: "", ward_ids: [], created_at: new Date().toISOString() }),
   invites: () => ({ ward_ids: [], created_at: new Date().toISOString() }),
   items: () => ({ code: "", generic: "", category: "Other", strength: "", is_active: true, created_at: new Date().toISOString() }),
@@ -467,6 +467,9 @@ export function createLocalBackend(store?: KeyValueStore): Backend & { reset(): 
         near_expiry_days: 30,
         theme: {},
         logo_url: "",
+        address: "",
+        phone: "",
+        email: "",
         created_by: user.id,
         created_at: new Date().toISOString(),
       });

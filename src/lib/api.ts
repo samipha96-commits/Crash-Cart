@@ -177,7 +177,7 @@ export function checkStats(lines: CheckLine[]) {
 
 export async function createHospital(
   b: Backend,
-  input: { name: string; code: string; starterCarts: boolean; theme?: HospitalTheme; logo_url?: string },
+  input: { name: string; code: string; starterCarts: boolean; theme?: HospitalTheme; logo_url?: string; details?: HospitalDetails },
   expiryFor?: (index: number) => string | null,
 ): Promise<string> {
   const name = input.name.trim();
@@ -186,6 +186,7 @@ export async function createHospital(
   const hid = uuid();
   await b.createHospital(hid, name, code);
   if (input.theme || input.logo_url) await b.update("hospitals", { id: hid }, { theme: input.theme ?? {}, logo_url: input.logo_url ?? "" });
+  if (input.details) await b.update("hospitals", { id: hid }, cleanDetails(input.details));
 
   const items: Item[] = STARTER_ITEMS.map((s) => ({
     id: uuid(),
@@ -224,9 +225,20 @@ export async function createHospital(
 export async function updateHospital(
   b: Backend,
   hid: string,
-  patch: { name?: string; code?: string; near_expiry_days?: number; theme?: HospitalTheme; logo_url?: string },
+  patch: { name?: string; code?: string; near_expiry_days?: number; theme?: HospitalTheme; logo_url?: string } & Partial<HospitalDetails>,
 ) {
   await b.update("hospitals", { id: hid }, patch);
+}
+
+/** Address and contacts shown in report headers. */
+export interface HospitalDetails {
+  address: string;
+  phone: string;
+  email: string;
+}
+
+export function cleanDetails(d: HospitalDetails): HospitalDetails {
+  return { address: d.address.trim().slice(0, 300), phone: d.phone.trim().slice(0, 60), email: d.email.trim().toLowerCase().slice(0, 120) };
 }
 
 // ------------------------------------------------------------------ carts
@@ -537,11 +549,24 @@ export const DEMO_USERS: { email: string; name: string; role: Role; wards: "all"
   { email: "admin@demo.hospital", name: "Aisha Rahman", role: "hospital_admin", wards: "all" },
   { email: "admin.icu@demo.hospital", name: "Bilal Saeed", role: "hospital_admin", wards: ["ICU", "Emergency"] },
   { email: "nurse@demo.hospital", name: "Omar Khalid", role: "nurse", wards: ["ICU"] },
+  { email: "nurse.er@demo.hospital", name: "Sara Javed", role: "nurse", wards: ["Emergency"] },
+  { email: "nurse.ward@demo.hospital", name: "Hina Tariq", role: "nurse", wards: ["Ward"] },
   { email: "nursing.manager@demo.hospital", name: "Mariam Saleh", role: "nursing_manager", wards: "all" },
   { email: "pharmacist@demo.hospital", name: "Lina Haddad", role: "pharmacy", wards: "all" },
   { email: "pharmacist.er@demo.hospital", name: "Hamza Noor", role: "pharmacy", wards: ["Emergency", "Ward"] },
   { email: "pharmacy.manager@demo.hospital", name: "Yusuf Ali", role: "pharmacy_manager", wards: "all" },
 ];
+
+/** A simple emblem (cross and hospital code) used as the demo hospitals' logo. */
+export function demoLogo(color: string, code: string): string {
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">` +
+    `<rect width="256" height="256" rx="56" fill="${color}"/>` +
+    `<path d="M106 40h44v50h50v44h-50v50h-44v-50H56V90h50z" fill="#fff"/>` +
+    `<text x="128" y="234" font-family="Arial,Helvetica,sans-serif" font-size="40" font-weight="700" fill="#fff" text-anchor="middle">${code}</text>` +
+    `</svg>`;
+  return `data:image/svg+xml;base64,${btoa(svg)}`;
+}
 
 /** First day of the month `offset` months from `today`'s month, as YYYY-MM-DD. */
 function monthStart(today: string, offset: number): string {
@@ -561,12 +586,26 @@ export async function seedDemo(b: Backend & { addSuperAdmin(email: string): void
   const expiryFor = (i: number) => (i % 7 === 3 ? null : addDays(today, offsets[(i * 5) % offsets.length]));
   const general = await createHospital(
     b,
-    { name: "City General Hospital", code: "CGH", starterCarts: true, theme: { design: "classic", preset: "teal" } },
+    {
+      name: "City General Hospital",
+      code: "CGH",
+      starterCarts: true,
+      theme: { design: "classic", preset: "teal" },
+      logo_url: demoLogo("#0f766e", "CGH"),
+      details: { address: "12 Hospital Road, City Centre", phone: "+1 555 0100", email: "pharmacy@citygeneral.example" },
+    },
     expiryFor,
   );
   const riverside = await createHospital(
     b,
-    { name: "Riverside Children's Hospital", code: "RCH", starterCarts: true, theme: { design: "friendly", preset: "plum" } },
+    {
+      name: "Riverside Children's Hospital",
+      code: "RCH",
+      starterCarts: true,
+      theme: { design: "friendly", preset: "plum" },
+      logo_url: demoLogo("#7e22ce", "RCH"),
+      details: { address: "4 Riverside Avenue", phone: "+1 555 0200", email: "pharmacy@riverside.example" },
+    },
     (i) => addDays(today, 30 + ((i * 37) % 500)),
   );
 

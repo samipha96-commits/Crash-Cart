@@ -29,7 +29,11 @@ pharmacist covering two sites) and switch between them.
   - *Several months*: the same, with a monthly summary per ward and one *Remarks* column for each
     selected month.
   - Every report has an overall performance gauge and a comparison with the previous month (or
-    across the selected months), and exports to Excel (.xlsx) or prints to PDF.
+    across the selected months).
+  - Every report opens with a letterhead: hospital logo, name, address, phone and email (set by the
+    Super admin in the portal settings), the period, and for each ward its crash cart, the nurse
+    responsible and the audits performed (date and pharmacist).
+  - Downloads as PDF, Excel (.xlsx) or CSV, each with the same header.
 - **Expiry tracker.** Every item in your wards, soonest expiry first.
 
 ### Who can do what

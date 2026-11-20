@@ -1,6 +1,6 @@
 import type { Backend } from "./backend/types";
 import { LINE_STATUS_LABEL } from "./catalog";
-import type { Cart, Check, CheckLine } from "./types";
+import type { Cart, Check, CheckLine, Hospital, Invite, Membership } from "./types";
 
 /**
  * Monthly crash cart audit reports, in the hospital pharmacy's format
@@ -289,4 +289,107 @@ export function wardItemRows(cells: WardMonth[]): ItemRow[] {
 /** Short ward name for sheet tabs and headings, e.g. "ICU". */
 export function wardName(c: Cart): string {
   return c.location || c.name;
+}
+
+// ------------------------------------------------------------------ report header
+
+export interface ReportWardInfo {
+  cart: Cart;
+  /** Nurses whose ward this is (the nurse responsible for the crash cart). */
+  nurses: string[];
+  /** The audit performed in each selected month (null when none). */
+  audits: { month: Month; date: string; by: string; seal: string }[];
+}
+
+/** Everything the report header shows: hospital details, logo, period, wards and people. */
+export interface ReportMeta {
+  hospital: Pick<Hospital, "name" | "code" | "logo_url" | "address" | "phone" | "email">;
+  title: string;
+  /** "Monthly comparison" for several months, else empty. */
+  subtitle: string;
+  period: string;
+  preparedBy: string;
+  preparedOn: string;
+  wards: ReportWardInfo[];
+}
+
+export function reportPeriod(months: Month[]): string {
+  if (!months.length) return "";
+  return months.length > 1 ? `${monthLong(months[0])} – ${monthLong(months[months.length - 1])}` : monthLong(months[0]);
+}
+
+/** Nurses of a ward: members first, then IDs that have not signed in yet. */
+export function wardNurses(cartId: string, members: Membership[], invites: Invite[] = []): string[] {
+  const m = members.filter((x) => x.role === "nurse" && x.ward_ids.includes(cartId)).map((x) => x.name || x.email);
+  const i = invites.filter((x) => x.role === "nurse" && x.ward_ids.includes(cartId)).map((x) => `${x.email} (not signed in yet)`);
+  return [...m, ...i];
+}
+
+export function reportMeta(
+  report: Report,
+  hospital: ReportMeta["hospital"],
+  members: Membership[],
+  invites: Invite[],
+  preparedBy: string,
+  now = new Date(),
+): ReportMeta {
+  return {
+    hospital: { name: hospital.name, code: hospital.code, logo_url: hospital.logo_url, address: hospital.address ?? "", phone: hospital.phone ?? "", email: hospital.email ?? "" },
+    title: "Crash Cart Audit Report",
+    subtitle: report.months.length > 1 ? "Monthly comparison" : "",
+    period: reportPeriod(report.months),
+    preparedBy,
+    preparedOn: dayTitle(now.toISOString()),
+    wards: report.wards.map((cart, wi) => ({
+      cart,
+      nurses: wardNurses(cart.id, members, invites),
+      audits: report.cells[wi]
+        .filter((c) => c.check)
+        .map((c) => ({
+          month: c.month,
+          date: dayTitle(c.check!.submitted_at ?? c.check!.created_at),
+          by: c.check!.performed_by_name,
+          seal: c.check!.seal_number ?? "",
+        })),
+    })),
+  };
+}
+
+// ------------------------------------------------------------------ comparison rows
+
+export interface ComparisonRow {
+  name: string;
+  ms: (Metrics | null)[];
+  /** Score change from the first to the last audited month, in points. */
+  change: number | null;
+  trend: Trend;
+}
+
+/** Month columns and one row per ward plus "All wards" (the comparison every report carries). */
+export function comparisonRows(report: Report): { cols: Month[]; rows: ComparisonRow[] } {
+  const multi = report.months.length > 1;
+  const cols: Month[] = multi ? report.months : [shiftMonth(report.months[0], -1), report.months[0]];
+  const metricsFor = (wi: number): (Metrics | null)[] =>
+    multi ? report.cells[wi].map((c) => c.metrics) : [report.previous[wi]?.metrics ?? null, report.cells[wi][0]?.metrics ?? null];
+  const raw = report.wards.map((w, wi) => ({ name: wardName(w), ms: metricsFor(wi) }));
+  raw.push({ name: "All wards", ms: cols.map((_, ci) => sumMetrics(report.wards.map((_, wi) => metricsFor(wi)[ci]))) });
+  return {
+    cols,
+    rows: raw.map((r) => {
+      const first = r.ms.find((m) => m) ?? null;
+      const last = r.ms[r.ms.length - 1];
+      const both = first && last && first !== last;
+      return {
+        ...r,
+        change: both ? round1(performanceScore(last) - performanceScore(first)) : null,
+        trend: trend(both ? performanceScore(first) : null, last ? performanceScore(last) : null),
+      };
+    }),
+  };
+}
+
+/** The remark of one item line in a single-month report. */
+export function lineRemark(l: CheckLine | undefined): string {
+  if (!l) return "";
+  return [l.remarks, l.obs_closed && l.obs_action ? `Closed: ${l.obs_action}` : ""].filter(Boolean).join(" · ");
 }
