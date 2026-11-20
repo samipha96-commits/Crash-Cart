@@ -12,7 +12,7 @@ export function HomePage() {
   const [starting, setStarting] = useState(false);
   const summaries = cartSummaries(data);
   const due = summaries.filter((s) => s.dailyDue);
-  const review = data.checks.filter((c) => c.status === "submitted");
+  const review = data.checks.filter((c) => c.status === "submitted" || c.status === "in_review");
   const expired = summaries.reduce((n, s) => n + s.expired, 0);
   const soon = summaries.reduce((n, s) => n + s.soon, 0);
   const attention = summaries
@@ -45,11 +45,11 @@ export function HomePage() {
       <div className="stats">
         <a href="#/carts" className={`stat ${due.length ? "warn" : ""}`}>
           <div className="n">{due.length}</div>
-          <div className="l">Carts due a daily check</div>
+          <div className="l">Wards due a pharmacy check this month</div>
         </a>
         <a href="#/checks" className={`stat ${review.length ? "warn" : ""}`}>
           <div className="n">{review.length}</div>
-          <div className="l">Checks awaiting review</div>
+          <div className="l">Pharmacy checks not closed yet</div>
         </a>
         <a href="#/expiry" className={`stat ${expired ? "danger" : ""}`}>
           <div className="n">{expired}</div>
@@ -67,7 +67,7 @@ export function HomePage() {
             <h2>Needs attention</h2>
           </div>
           <div className="card list">
-            {attention.length === 0 && <Empty>All carts are checked and in date.</Empty>}
+            {attention.length === 0 && <Empty>All wards are checked and in date.</Empty>}
             {attention.map((s) => (
               <a key={s.cart.id} href={`#/carts/${s.cart.id}`} className="list-item">
                 <div className="list-main">

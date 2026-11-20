@@ -25,12 +25,26 @@ export interface User {
 export type ThemePreset = "teal" | "navy" | "crimson" | "emerald" | "plum" | "amber" | "slate";
 
 /** Look and feel of a hospital's portal, set by the Super admin. */
+/** Whole-portal UI designs: layout, navigation, cards, type and shape together. */
+export type DesignStyle = "classic" | "clinical" | "modern" | "friendly" | "executive";
+
 export interface HospitalTheme {
+  /** Colour palette. */
   preset?: ThemePreset;
   /** Custom brand colour (#rrggbb); overrides the preset's main colour. */
   primary?: string;
+  /** UI design; the fields below override single parts of it. */
+  design?: DesignStyle;
+  /** Navigation: a side bar, or a bar across the top (desktop). */
+  layout?: "sidebar" | "topnav";
+  /** Navigation colour. */
+  nav?: "light" | "brand" | "dark";
+  /** Card style. */
+  cards?: "elevated" | "outlined" | "flat";
+  /** Body typeface. */
+  font?: "outfit" | "inter" | "plex" | "nunito";
   /** Corner style of cards and buttons. */
-  corners?: "rounded" | "soft" | "square";
+  corners?: "round" | "rounded" | "soft" | "square";
   /** Spacing of lists and cards. */
   density?: "comfortable" | "compact";
   /** Heading typeface. */
@@ -73,7 +87,12 @@ export interface Invite {
 export interface Item {
   id: string;
   hospital_id: string;
+  /** Hospital's own item code. */
+  code: string;
+  /** Description, e.g. "INJ: ATROPINE". */
   name: string;
+  /** Generic name. */
+  generic: string;
   kind: ItemKind;
   category: string;
   strength: string;
@@ -119,6 +138,8 @@ export interface Check {
   check_type: CheckType;
   audience: Audience;
   status: CheckStatus;
+  /** Items not OK when the check was submitted. */
+  issue_count: number;
   performed_by: string;
   performed_by_name: string;
   seal_number: string;
@@ -135,6 +156,7 @@ export interface CheckLine {
   hospital_id: string;
   check_id: string;
   cart_item_id: string | null;
+  item_code: string;
   item_name: string;
   strength: string;
   drawer_name: string;

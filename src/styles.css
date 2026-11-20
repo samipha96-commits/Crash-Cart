@@ -373,7 +373,7 @@ textarea {
   gap: 6px;
   min-height: 44px;
   padding: 0 16px;
-  border-radius: 11px;
+  border-radius: min(11px, var(--radius));
   border: 1px solid var(--line);
   background: var(--surface);
   font-weight: 550;
@@ -994,4 +994,195 @@ table.data td {
   .print-break {
     break-before: page;
   }
+}
+
+/* ---------------------------------------------------------------- portal designs
+   Set by the Super admin per hospital (src/lib/theme.ts): layout, navigation,
+   cards and shape, applied as data attributes on <html>. */
+
+html[data-corners="round"] .btn,
+html[data-corners="round"] .chip,
+html[data-corners="round"] .seg {
+  border-radius: 999px;
+}
+
+html[data-cards="outlined"] .card,
+html[data-cards="outlined"] .stat {
+  box-shadow: none;
+  border: 1.5px solid var(--line);
+}
+
+html[data-cards="flat"] .card,
+html[data-cards="flat"] .stat {
+  box-shadow: none;
+  border-color: transparent;
+}
+
+html[data-cards="flat"] {
+  --surface: color-mix(in srgb, var(--primary) 4%, #ffffff);
+}
+
+/* Brand-coloured and dark navigation */
+html[data-nav="brand"] .topbar {
+  background: var(--primary);
+  color: var(--primary-ink);
+  border-bottom-color: transparent;
+}
+html[data-nav="dark"] .topbar {
+  background: #1f2933;
+  color: #f3f5f7;
+  border-bottom-color: transparent;
+}
+html[data-nav="brand"] .topbar .select-hospital,
+html[data-nav="dark"] .topbar .select-hospital {
+  color: inherit;
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.4);
+}
+html[data-nav="brand"] .topbar .badge.primary,
+html[data-nav="dark"] .topbar .badge.primary {
+  background: rgba(255, 255, 255, 0.18);
+  color: inherit;
+}
+
+@media (min-width: 900px) {
+  html[data-nav="brand"] .sidebar {
+    background: var(--primary);
+    color: var(--primary-ink);
+    border-color: transparent;
+  }
+  html[data-nav="dark"] .sidebar {
+    background: #1f2933;
+    color: #f3f5f7;
+    border-color: transparent;
+  }
+  html[data-nav="brand"] .sidebar .side-link,
+  html[data-nav="dark"] .sidebar .side-link,
+  html[data-nav="brand"] .sidebar .muted,
+  html[data-nav="dark"] .sidebar .muted,
+  html[data-nav="brand"] .sidebar .strong,
+  html[data-nav="dark"] .sidebar .strong,
+  html[data-nav="brand"] .sidebar .btn,
+  html[data-nav="dark"] .sidebar .btn {
+    color: inherit !important;
+  }
+  html[data-nav="brand"] .sidebar .side-link:hover,
+  html[data-nav="dark"] .sidebar .side-link:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+  html[data-nav="brand"] .sidebar .side-link.active,
+  html[data-nav="dark"] .sidebar .side-link.active {
+    background: rgba(255, 255, 255, 0.2);
+    color: inherit;
+  }
+  html[data-nav="brand"] .brand-mark,
+  html[data-nav="dark"] .brand-mark {
+    background: rgba(255, 255, 255, 0.2);
+  }
+
+  /* Menu across the top */
+  html[data-layout="topnav"] .app {
+    flex-direction: column;
+  }
+  html[data-layout="topnav"] .sidebar {
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    width: auto;
+    height: auto;
+    position: sticky;
+    top: 0;
+    z-index: 25;
+    padding: 8px 24px;
+    gap: 2px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  html[data-layout="topnav"] .sidebar .brand {
+    padding: 0 18px 0 0;
+  }
+  html[data-layout="topnav"] .sidebar .side-link {
+    padding: 8px 12px;
+  }
+  html[data-layout="topnav"] .sidebar .nav-gap {
+    display: none;
+  }
+  html[data-layout="topnav"] .sidebar .side-user {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0;
+  }
+  html[data-layout="topnav"] .sidebar .side-user > div {
+    display: none;
+  }
+  html[data-layout="topnav"] .sidebar .side-user .btn {
+    margin-top: 0 !important;
+  }
+  html[data-layout="topnav"] .topbar {
+    top: 56px;
+    position: static;
+  }
+  html[data-layout="topnav"] .page {
+    max-width: 1180px;
+  }
+}
+
+/* Mini previews of the designs (Super admin settings) */
+.designs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+.design-card {
+  border: 1.5px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 8px;
+  text-align: left;
+  font: inherit;
+  color: var(--ink);
+  cursor: pointer;
+}
+.design-card.on {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+}
+.design-card .t {
+  font-weight: 600;
+  margin-top: 6px;
+}
+.design-card .s {
+  font-size: 12px;
+  color: var(--muted);
+}
+.mini {
+  height: 74px;
+  display: flex;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #f5f5f4;
+  border: 1px solid #e7e5e4;
+}
+.mini.top {
+  flex-direction: column;
+}
+.mini .nav {
+  flex: none;
+}
+.mini:not(.top) .nav {
+  width: 28%;
+}
+.mini.top .nav {
+  height: 14px;
+}
+.mini .body {
+  flex: 1;
+  padding: 6px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+}
+.mini .tile {
+  background: #fff;
 }

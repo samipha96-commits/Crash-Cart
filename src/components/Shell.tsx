@@ -20,12 +20,13 @@ export function Shell({ children }: { children: ReactNode }) {
     if (can.review(p, audience) && (audience === "nursing" ? status === "submitted" : status === "in_review")) return true;
     return p.role === "pharmacy" && audience === "pharmacy" && status === "submitted";
   }
+  // Nurses and the nursing manager see the pharmacy's checks of their wards (read-only).
   const seesChecks = p.isSuper || p.role !== "hospital_admin";
   const isOn = (h: string) => (h === "/" ? path === "/" : path.startsWith(h));
   const all = [
     { href: "/", label: "Home", icon: <Icon.home />, count: 0, show: true },
     { href: "/carts", label: "Wards", icon: <Icon.cart />, count: can.runChecks(p) ? due : 0, show: true },
-    { href: "/checks", label: p.role === "pharmacy" || p.role === "pharmacy_manager" ? "Audits" : "Checks", icon: <Icon.check />, count: review, show: seesChecks },
+    { href: "/checks", label: "Checks", icon: <Icon.check />, count: review, show: seesChecks },
     { href: "/reports", label: "Reports", icon: <Icon.chart />, count: 0, show: can.reports(p) },
     { href: "/expiry", label: "Expiry", icon: <Icon.clock />, count: expiring, show: true },
     { href: "/team", label: p.isSuper ? "Staff & rights" : "Staff", icon: <Icon.users />, count: 0, show: can.manageStaff(p) },
@@ -34,7 +35,6 @@ export function Shell({ children }: { children: ReactNode }) {
   const extra = [
     ...all.slice(4).map((n) => ({ href: n.href, label: n.label, icon: n.icon })),
     { href: "/items", label: "Item list", icon: <Icon.pill /> },
-    ...(can.manageStaff(p) ? [] : [{ href: "/team", label: "Staff", icon: <Icon.users /> }]),
     { href: "/more", label: p.isSuper ? "Portal & settings" : "Settings", icon: <Icon.settings /> },
   ];
   const brand = data.hospital.logo_url ? <img className="brand-logo" src={data.hospital.logo_url} alt="" /> : <BrandMark />;
@@ -66,14 +66,14 @@ export function Shell({ children }: { children: ReactNode }) {
             {n.count > 0 && <span className="count">{n.count}</span>}
           </a>
         ))}
-        <div style={{ height: 14 }} />
+        <div className="nav-gap" style={{ height: 14 }} />
         {extra.map((n) => (
           <a key={n.href} href={`#${n.href}`} className={`side-link ${isOn(n.href) ? "active" : ""}`}>
             {n.icon} {n.label}
           </a>
         ))}
         <div className="spacer" />
-        <div className="small muted" style={{ padding: "0 8px" }}>
+        <div className="small muted side-user" style={{ padding: "0 8px" }}>
           <div className="strong" style={{ color: "var(--ink)" }}>
             {ws.user.name || ws.user.email}
           </div>

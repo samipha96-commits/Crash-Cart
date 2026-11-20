@@ -5,8 +5,8 @@
 --                      and every kind of ID, including Hospital admins for some or all wards
 -- hospital_admin       sets the crash cart items of its wards; creates nurse and
 --                      pharmacist IDs inside its own wards
--- nurse                assesses the cart of ONE ward; checks are seen by nursing only
--- nursing_manager      reviews and closes nurses' checks (all wards)
+-- nurse                ONE ward: item list (CSV), updates expiry dates, sees the pharmacy's checks
+-- nursing_manager      every ward: item lists, expiry dates, the pharmacy's checks (read-only)
 -- pharmacy             pharmacist: monthly audits of its wards, closes observations
 -- pharmacy_manager     reviews pharmacists' audits; reports of every ward (was "quality")
 --
@@ -46,6 +46,11 @@ update checks c set audience = 'pharmacy'
 alter table checks drop constraint if exists checks_status_check;
 alter table checks add constraint checks_status_check check (status in ('draft','submitted','in_review','closed'));
 
+alter table checks add column if not exists issue_count int not null default 0;
+alter table check_lines add column if not exists item_code text not null default '';
+alter table items add column if not exists code text not null default '';
+alter table items add column if not exists generic text not null default '';
+create unique index if not exists items_code_unique on items (hospital_id, upper(code)) where code <> '';
 alter table check_lines add column if not exists obs_action text not null default '';
 alter table check_lines add column if not exists obs_closed boolean not null default false;
 
@@ -73,13 +78,15 @@ as $$
   );
 $$;
 
--- Nursing checks stay in nursing, pharmacy audits in pharmacy.
+-- Pharmacy checks are seen by pharmacy and by the ward's nurses (read-only).
+-- Older nursing checks stay inside nursing.
 create or replace function can_see_check(hid uuid, cart uuid, aud text)
 returns boolean
 language sql stable security definer set search_path = public
 as $$
   select ward_ok(hid, cart,
-    case when aud = 'nursing' then array['nurse','nursing_manager'] else array['pharmacy','pharmacy_manager'] end);
+    case when aud = 'nursing' then array['nurse','nursing_manager']
+         else array['pharmacy','pharmacy_manager','nurse','nursing_manager'] end);
 $$;
 
 -- Super admin: any role. Hospital admin: nurses and pharmacists inside its own wards.
@@ -145,6 +152,7 @@ begin
   end if;
   if old.status = new.status then
     if old.status = 'draft' and not is_checker then raise exception 'Only the checker can change a check in progress.'; end if;
+    if old.status <> 'draft' and not (is_checker or reviewer) then raise exception 'Your role cannot change this check.'; end if;
     return new;
   end if;
   if step = 'draft>submitted' then
@@ -242,24 +250,49 @@ create policy drawers_write on drawers for all
   using (ward_ok(hospital_id, cart_id, array['hospital_admin']))
   with check (ward_ok(hospital_id, cart_id, array['hospital_admin']));
 
--- cart contents: the ward's Hospital admin sets items; its pharmacists restock.
+-- item list: each hospital's own, kept by its Hospital admins.
+drop policy if exists items_write on items;
+create policy items_write on items for all
+  using (has_role(hospital_id, array['hospital_admin'])) with check (has_role(hospital_id, array['hospital_admin']));
+
+-- cart contents: the ward's Hospital admin sets items; pharmacists and nurses of
+-- the ward update only lot and expiry (guarded below).
 drop policy if exists cart_items_read on cart_items;
 create policy cart_items_read on cart_items for select using (ward_ok(hospital_id, cart_id));
 drop policy if exists cart_items_write on cart_items;
-create policy cart_items_write on cart_items for all
-  using (ward_ok(hospital_id, cart_id, array['hospital_admin','pharmacy']))
-  with check (ward_ok(hospital_id, cart_id, array['hospital_admin','pharmacy']));
+drop policy if exists cart_items_admin on cart_items;
+create policy cart_items_admin on cart_items for all
+  using (ward_ok(hospital_id, cart_id, array['hospital_admin']))
+  with check (ward_ok(hospital_id, cart_id, array['hospital_admin']));
+drop policy if exists cart_items_restock on cart_items;
+create policy cart_items_restock on cart_items for update
+  using (ward_ok(hospital_id, cart_id, array['pharmacy','nurse','nursing_manager']))
+  with check (ward_ok(hospital_id, cart_id, array['pharmacy','nurse','nursing_manager']));
 
--- checks: nurses assess their ward (nursing only); pharmacists audit theirs (pharmacy only).
+create or replace function guard_cart_item_restock()
+returns trigger
+language plpgsql security definer set search_path = public
+as $$
+begin
+  if ward_ok(old.hospital_id, old.cart_id, array['hospital_admin']) then return new; end if;
+  if (to_jsonb(new) - 'lot_number' - 'expiry_date' - 'updated_at') <> (to_jsonb(old) - 'lot_number' - 'expiry_date' - 'updated_at') then
+    raise exception 'Only the Hospital admin of this ward can change its items; others update expiry and lot.';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists cart_items_restock_guard on cart_items;
+create trigger cart_items_restock_guard before update on cart_items
+  for each row execute function guard_cart_item_restock();
+
+-- checks: only pharmacists check carts (nurses check against the CSV item list off the app).
 drop policy if exists checks_read on checks;
 create policy checks_read on checks for select using (can_see_check(hospital_id, cart_id, audience));
 drop policy if exists checks_insert on checks;
 create policy checks_insert on checks for insert
   with check (
-    performed_by = auth.uid() and not is_super_admin() and (
-      (audience = 'nursing' and ward_ok(hospital_id, cart_id, array['nurse'])) or
-      (audience = 'pharmacy' and ward_ok(hospital_id, cart_id, array['pharmacy']))
-    )
+    performed_by = auth.uid() and not is_super_admin()
+    and audience = 'pharmacy' and ward_ok(hospital_id, cart_id, array['pharmacy'])
   );
 drop policy if exists checks_update on checks;
 create policy checks_update on checks for update

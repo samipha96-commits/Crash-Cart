@@ -12,7 +12,7 @@ interface DemoUser extends User {
 }
 
 interface DemoDb {
-  version: 2;
+  version: 3;
   users: DemoUser[];
   /** Emails of Super admins (the platform owner). */
   superEmails: string[];
@@ -25,19 +25,20 @@ export interface KeyValueStore {
   setItem(key: string, value: string): void;
 }
 
-export const DEMO_KEY = "crash-cart-demo-v2";
+export const DEMO_KEY = "crash-cart-demo-v3";
 
 const DEFAULTS: { [K in TableName]: () => Partial<Tables[K]> } = {
   hospitals: () => ({ near_expiry_days: 30, theme: {}, logo_url: "", created_at: new Date().toISOString() }),
   memberships: () => ({ name: "", ward_ids: [], created_at: new Date().toISOString() }),
   invites: () => ({ ward_ids: [], created_at: new Date().toISOString() }),
-  items: () => ({ category: "General", strength: "", is_active: true, created_at: new Date().toISOString() }),
+  items: () => ({ code: "", generic: "", category: "Other", strength: "", is_active: true, created_at: new Date().toISOString() }),
   carts: () => ({ cart_type: "Ward", seal_number: "", created_at: new Date().toISOString() }),
   drawers: () => ({}),
   cart_items: () => ({ par_qty: 1, lot_number: "", expiry_date: null, updated_at: new Date().toISOString() }),
   checks: () => ({
     status: "draft",
-    audience: "nursing",
+    audience: "pharmacy",
+    issue_count: 0,
     performed_by_name: "",
     seal_number: "",
     remarks: "",
@@ -48,6 +49,7 @@ const DEFAULTS: { [K in TableName]: () => Partial<Tables[K]> } = {
     closed_at: null,
   }),
   check_lines: () => ({
+    item_code: "",
     strength: "",
     drawer_order: 0,
     found_qty: null,
@@ -60,14 +62,19 @@ const DEFAULTS: { [K in TableName]: () => Partial<Tables[K]> } = {
 };
 
 const ADMIN_GRANTABLE: Role[] = ["nurse", "pharmacy"];
-const DEPT: Record<Audience, Role[]> = { nursing: ["nurse", "nursing_manager"], pharmacy: ["pharmacy", "pharmacy_manager"] };
+/** Who may read checks of each kind. Nurses see the pharmacy's checks of their ward (read-only). */
+const DEPT: Record<Audience, Role[]> = {
+  nursing: ["nurse", "nursing_manager"],
+  pharmacy: ["pharmacy", "pharmacy_manager", "nurse", "nursing_manager"],
+};
+const RESTOCK_FIELDS = ["lot_number", "expiry_date", "updated_at"];
 const CHECKER: Record<Audience, Role> = { nursing: "nurse", pharmacy: "pharmacy" };
 const REVIEWER: Record<Audience, Role> = { nursing: "nursing_manager", pharmacy: "pharmacy_manager" };
 const OBS_FIELDS = ["obs_action", "obs_closed"];
 
 function emptyDb(): DemoDb {
   return {
-    version: 2,
+    version: 3,
     users: [],
     superEmails: [],
     sessionUserId: null,
@@ -106,7 +113,7 @@ export function createLocalBackend(store?: KeyValueStore): Backend & { reset(): 
       const raw = kv.getItem(DEMO_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as DemoDb;
-        if (parsed.version === 2 && Array.isArray(parsed.superEmails)) return parsed;
+        if (parsed.version === 3 && Array.isArray(parsed.superEmails)) return parsed;
       }
     } catch {
       /* corrupted or blocked storage: start fresh */
@@ -215,7 +222,7 @@ export function createLocalBackend(store?: KeyValueStore): Backend & { reset(): 
         assertGrant(hid, r.role as Role, r.ward_ids as string[]);
         return;
       case "items":
-        if (!(isSuper() || ["hospital_admin", "pharmacy"].includes(mem(hid)?.role ?? ""))) deny();
+        if (!(isSuper() || mem(hid)?.role === "hospital_admin")) deny("Only the Hospital admin keeps the item list.");
         return;
       case "carts":
         // Wards are created and removed by the Super admin; admins of the ward may rename / reseal.
@@ -224,14 +231,19 @@ export function createLocalBackend(store?: KeyValueStore): Backend & { reset(): 
       case "drawers":
         if (!wardOk(hid, r.cart_id as string, ["hospital_admin"])) deny("Only the Hospital admin of this ward can set its crash cart.");
         return;
-      case "cart_items":
-        if (!wardOk(hid, r.cart_id as string, ["hospital_admin", "pharmacy"])) deny("Only the Hospital admin or pharmacist of this ward can change its items.");
+      case "cart_items": {
+        // The ward's admin sets items; pharmacists and nurses only update lot and expiry.
+        if (wardOk(hid, r.cart_id as string, ["hospital_admin"])) return;
+        const restocker = wardOk(hid, r.cart_id as string, ["pharmacy", "nurse", "nursing_manager"]);
+        const onlyRestock = before && Object.keys(r).every((k) => RESTOCK_FIELDS.includes(k) || r[k] === before[k]) && before !== r;
+        if (!restocker || !onlyRestock) deny("Only the Hospital admin of this ward can change its items; others update expiry and lot.");
         return;
+      }
       case "checks": {
         const c = r as unknown as Tables["checks"];
         if (!before) {
-          if (isSuper() || !wardOk(hid, c.cart_id, [CHECKER[c.audience]]))
-            deny(c.audience === "nursing" ? "Only a nurse of this ward can assess its cart." : "Only a pharmacist of this ward can audit its cart.");
+          if (isSuper() || c.audience !== "pharmacy" || !wardOk(hid, c.cart_id, ["pharmacy"]))
+            deny("Only a pharmacist of this ward can check its cart.");
         } else if (!seesCheck(before as unknown as Tables["checks"])) deny();
         return;
       }

@@ -22,26 +22,35 @@ export function ChecksPage() {
   const [cartFilter, setCartFilter] = useState("");
   const [starting, setStarting] = useState(false);
   const carts = new Map(data.carts.map((c) => [c.id, c]));
-  const issues = new Map<string, number>();
-  for (const l of data.openLines) if (l.line_status !== "present") issues.set(l.check_id, (issues.get(l.check_id) ?? 0) + 1);
-  const list = data.checks.filter((c) => (filter === "all" || c.status === filter) && (!cartFilter || c.cart_id === cartFilter));
+  const issues = new Map<string, number>(data.checks.map((c) => [c.id, c.issue_count ?? 0]));
+  // Lines of open checks give a live count for checks still being filled in.
+  for (const c of data.checks.filter((x) => x.status === "draft")) issues.set(c.id, 0);
+  for (const l of data.openLines) if (l.line_status !== "present" && data.checks.find((c) => c.id === l.check_id)?.status === "draft") issues.set(l.check_id, (issues.get(l.check_id) ?? 0) + 1);
+  const nursing = data.perm.role === "nurse" || data.perm.role === "nursing_manager";
+  const list = data.checks.filter(
+    (c) =>
+      (filter === "all" || c.status === filter) &&
+      (!cartFilter || c.cart_id === cartFilter) &&
+      // Nurses see what the pharmacy has submitted, not checks still being filled in.
+      !(c.status === "draft" && (data.perm.role === "nurse" || data.perm.role === "nursing_manager")),
+  );
 
   return (
     <div className="page">
       <div className="page-head">
         <div>
-          <h1>{pharmacy ? "Pharmacy audits" : "Checks"}</h1>
+          <h1>Checks</h1>
           <p>
             {pharmacy
-              ? "Pharmacists' audits of the crash carts. Pharmacists close each observation, then the pharmacy manager reviews."
-              : data.perm.isSuper
-                ? "Nurses' checks (seen by nursing only) and pharmacists' audits."
-                : "Nurses' crash cart checks. They stay inside nursing: only nurses of the ward and the nursing manager see them."}
+              ? "Pharmacists' checks of the crash carts. Pharmacists close each observation, then the pharmacy manager reviews."
+              : nursing
+                ? "The pharmacy's checks of your ward's crash cart: when it was checked, the issues found, and whether they are closed."
+                : "The pharmacy's checks of every ward's crash cart."}
           </p>
         </div>
         {can.runChecks(data.perm) && data.carts.length > 0 && (
           <button className="btn primary" onClick={() => setStarting(true)}>
-            <Icon.plus /> {data.perm.role === "pharmacy" ? "Start an audit" : "Start a check"}
+            <Icon.plus /> Start a check
           </button>
         )}
       </div>
@@ -74,8 +83,19 @@ export function ChecksPage() {
                 {CHECK_TYPE_LABEL[c.check_type]} · {c.performed_by_name} · {formatDateTime(c.created_at)}
               </div>
             </div>
-            {(issues.get(c.id) ?? 0) > 0 && <span className="badge danger hide-mobile">{issues.get(c.id)} issues</span>}
-            <StatusBadge status={c.status} />
+            {c.status !== "draft" &&
+              ((issues.get(c.id) ?? 0) > 0 ? (
+                <span className="badge danger">
+                  {issues.get(c.id)} issue{issues.get(c.id) === 1 ? "" : "s"}
+                </span>
+              ) : (
+                <span className="badge ok">No issues</span>
+              ))}
+            {nursing && c.status !== "draft" ? (
+              <span className={`badge ${c.status === "closed" ? "ok" : "warn"}`}>{c.status === "closed" ? "Closed" : "Not closed yet"}</span>
+            ) : (
+              <StatusBadge status={c.status} />
+            )}
           </a>
         ))}
       </div>

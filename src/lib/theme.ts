@@ -1,4 +1,95 @@
-import type { Hospital, HospitalTheme, ThemePreset } from "./types";
+import type { DesignStyle, Hospital, HospitalTheme, ThemePreset } from "./types";
+
+type Resolved = Required<Omit<HospitalTheme, "primary" | "preset" | "design">>;
+
+/** Complete UI designs. Each changes layout, navigation, cards, type and shape, not just colour. */
+export const DESIGNS: Record<DesignStyle, { label: string; about: string; preset: ThemePreset } & Resolved> = {
+  classic: {
+    label: "Classic",
+    about: "Side menu, warm paper tones, serif headings, soft shadows",
+    preset: "teal",
+    layout: "sidebar",
+    nav: "light",
+    cards: "elevated",
+    font: "outfit",
+    corners: "rounded",
+    density: "comfortable",
+    headings: "serif",
+  },
+  clinical: {
+    label: "Clinical",
+    about: "Menu across the top in brand colour, crisp outlines, square corners, compact",
+    preset: "navy",
+    layout: "topnav",
+    nav: "brand",
+    cards: "outlined",
+    font: "plex",
+    corners: "square",
+    density: "compact",
+    headings: "sans",
+  },
+  modern: {
+    label: "Modern",
+    about: "Brand-coloured side menu, flat tiles, clean sans-serif",
+    preset: "emerald",
+    layout: "sidebar",
+    nav: "brand",
+    cards: "flat",
+    font: "inter",
+    corners: "soft",
+    density: "comfortable",
+    headings: "sans",
+  },
+  friendly: {
+    label: "Friendly",
+    about: "Top menu, very round shapes and pill buttons, rounded type",
+    preset: "plum",
+    layout: "topnav",
+    nav: "light",
+    cards: "elevated",
+    font: "nunito",
+    corners: "round",
+    density: "comfortable",
+    headings: "sans",
+  },
+  executive: {
+    label: "Executive",
+    about: "Dark side menu, outlined panels, serif headings, compact",
+    preset: "slate",
+    layout: "sidebar",
+    nav: "dark",
+    cards: "outlined",
+    font: "inter",
+    corners: "soft",
+    density: "compact",
+    headings: "serif",
+  },
+};
+
+/** The full set of UI choices for a theme: its design, then any single overrides. */
+export function resolveTheme(t: HospitalTheme | undefined): Resolved & { design: DesignStyle; preset: ThemePreset } {
+  const theme = t ?? {};
+  const design = theme.design && DESIGNS[theme.design] ? theme.design : "classic";
+  const d = DESIGNS[design];
+  return {
+    design,
+    preset: theme.preset ?? d.preset,
+    layout: theme.layout ?? d.layout,
+    nav: theme.nav ?? d.nav,
+    cards: theme.cards ?? d.cards,
+    font: theme.font ?? d.font,
+    corners: theme.corners ?? d.corners,
+    density: theme.density ?? d.density,
+    headings: theme.headings ?? d.headings,
+  };
+}
+
+const FONTS = {
+  outfit: '"Outfit", system-ui, sans-serif',
+  inter: '"Inter", system-ui, sans-serif',
+  plex: '"IBM Plex Sans", system-ui, sans-serif',
+  nunito: '"Nunito", system-ui, sans-serif',
+} as const;
 
 /** Brand palettes a hospital portal can start from (light background, main colour). */
 export const THEME_PRESETS: Record<ThemePreset, { label: string; primary: string; bg: string; surface2: string; line: string }> = {
@@ -11,7 +102,7 @@ export const THEME_PRESETS: Record<ThemePreset, { label: string; primary: string
   slate: { label: "Slate", primary: "#334155", bg: "#f1f3f5", surface2: "#f6f7f9", line: "#dde1e6" },
 };
 
-const RADIUS = { rounded: "14px", soft: "8px", square: "2px" } as const;
+const RADIUS = { round: "22px", rounded: "14px", soft: "8px", square: "2px" } as const;
 
 function hexToRgb(hex: string): [number, number, number] | null {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
@@ -34,13 +125,14 @@ export function isHexColor(v: string | undefined): v is string {
 
 /** The CSS variables for a hospital's portal, in light or dark mode. */
 export function themeVars(theme: HospitalTheme | undefined, dark: boolean): Record<string, string> {
-  const t = theme ?? {};
-  const preset = THEME_PRESETS[t.preset ?? "teal"] ?? THEME_PRESETS.teal;
-  const primary = isHexColor(t.primary) ? t.primary : preset.primary;
+  const r = resolveTheme(theme);
+  const preset = THEME_PRESETS[r.preset] ?? THEME_PRESETS.teal;
+  const primary = isHexColor(theme?.primary) ? theme!.primary! : preset.primary;
   const vars: Record<string, string> = {
-    "--radius": RADIUS[t.corners ?? "rounded"],
-    "--display": t.headings === "sans" ? 'var(--font)' : '"Fraunces", Georgia, serif',
-    "--pad": t.density === "compact" ? "10px" : "14px",
+    "--radius": RADIUS[r.corners],
+    "--font": FONTS[r.font],
+    "--display": r.headings === "sans" ? FONTS[r.font] : '"Fraunces", Georgia, serif',
+    "--pad": r.density === "compact" ? "10px" : "14px",
   };
   if (dark) {
     vars["--primary"] = mix(primary, "#ffffff", 0.45);
@@ -57,13 +149,16 @@ export function themeVars(theme: HospitalTheme | undefined, dark: boolean): Reco
   return vars;
 }
 
-const APPLIED = ["--radius", "--display", "--pad", "--primary", "--primary-ink", "--primary-soft", "--bg", "--surface-2", "--line"];
+const APPLIED = ["--radius", "--font", "--display", "--pad", "--primary", "--primary-ink", "--primary-soft", "--bg", "--surface-2", "--line"];
 
 /** Applies (or clears, with null) a hospital's look to the whole page. */
 export function applyTheme(h: Pick<Hospital, "theme"> | null) {
   const root = document.documentElement;
   for (const k of APPLIED) root.style.removeProperty(k);
+  for (const k of ["layout", "nav", "cards", "corners"]) delete root.dataset[k];
   if (!h) return;
+  const r = resolveTheme(h.theme);
+  Object.assign(root.dataset, { layout: r.layout, nav: r.nav, cards: r.cards, corners: r.corners });
   const dark = window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false;
   for (const [k, v] of Object.entries(themeVars(h.theme, dark))) root.style.setProperty(k, v);
   const meta = document.querySelector('meta[name="theme-color"]');

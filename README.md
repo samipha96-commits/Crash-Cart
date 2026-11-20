@@ -8,13 +8,17 @@ pharmacist covering two sites) and switch between them.
 
 ## What it does
 
-- **Hospital portals.** The **Super admin** creates each hospital's portal with its own theme, brand
-  colour, corner style, spacing, heading style and logo, and its wards (one crash cart per ward).
+- **Hospital portals.** The **Super admin** creates each hospital's portal with its own UI design
+  (Classic, Clinical, Modern, Friendly, Executive: menu position and colour, card style, typeface,
+  shapes, spacing, all fine-tunable), colours and logo, and its wards (one crash cart per ward).
+- **Item list per hospital.** Code, Description, Strength, Generic and Category (the hospital's own
+  categories or the defaults), kept by the Hospital admin. Exportable to CSV.
 - **Wards and crash carts.** Each ward's cart has floors (drawers) holding items with an approved
   quantity, lot number and expiry date. The ward's Hospital admin sets the items.
-- **Nurse checks (internal to nursing).** A nurse assesses the cart of their one ward, item by item
-  (OK, short, missing, expired, expiring, damaged). The check goes to the nursing manager only;
-  pharmacy and admins don't see it.
+- **Nurses.** No checking in the app: the Wards tab gives the ward's item list as CSV to check the
+  cart against, and shows when the pharmacy last checked it or that a check is due. The Checks tab
+  shows the pharmacy's submissions with their issues and whether they are closed. Nurses update
+  expiry dates in the Expiry tab.
 - **Pharmacist audits.** Pharmacists audit their wards' carts monthly with the same checklist,
   close every observation with the action taken, then send the audit to the Pharmacy manager, who
   reviews and closes it (or sends it back).
@@ -34,12 +38,13 @@ pharmacist covering two sites) and switch between them.
 | --- | --- | --- |
 | Super admin | all hospitals | Create hospital portals (look, logo), wards, and any ID, including several Hospital admins per hospital |
 | Hospital admin | some or all wards (set by Super admin) | Set crash cart items of their wards; create nurse and pharmacist IDs inside their wards |
-| Nurse | exactly one ward | Assess their ward's cart; report goes to the nursing manager |
-| Nursing manager | all wards | Review and close nurses' checks |
+| Nurse | exactly one ward | Item list (CSV), update expiry dates, see the pharmacy's checks |
+| Nursing manager | all wards | The same for every ward |
 | Pharmacist | some or all wards | Monthly audits, close observations, restock lot/expiry, reports of their wards |
 | Pharmacy manager (was Quality) | all wards | Review and close audits, reports of every ward |
 
-The rules are enforced in the database (row-level security), not only in the app.
+Only the Super admin and Hospital admins see the Staff tab. The rules are enforced in the database
+(row-level security), not only in the app.
 
 ## Run it
 

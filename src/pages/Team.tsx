@@ -29,6 +29,16 @@ export function TeamPage() {
     p.isSuper ||
     (p.role === "hospital_admin" && ADMIN_GRANTABLE.includes(role) && (allScope || (wardIds.length > 0 && wardIds.every((w) => p.wardIds.includes(w)))));
 
+  // The Staff tab is only for the Super admin and Hospital admins.
+  if (!can.manageStaff(p))
+    return (
+      <div className="page">
+        <div className="card">
+          <div className="empty">Staff IDs are managed by your Hospital admin.</div>
+        </div>
+      </div>
+    );
+
   return (
     <div className="page">
       <div className="page-head">
@@ -110,12 +120,14 @@ export function TeamPage() {
           <h2>Roles</h2>
         </div>
         <div className="card list">
+          {p.isSuper && (
           <div className="list-item">
             <div className="list-main">
               <div className="t">Super admin</div>
               <div className="s">Creates hospital portals (theme, look, logo) and their wards, and Hospital admin IDs for some or all wards</div>
             </div>
           </div>
+          )}
           {ROLES.map((r) => (
             <div key={r} className="list-item">
               <div className="list-main">

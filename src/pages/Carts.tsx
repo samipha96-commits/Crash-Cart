@@ -6,6 +6,7 @@ import { formatDateTime } from "../lib/dates";
 import { navigate } from "../lib/router";
 import { Icon } from "../components/icons";
 import { Empty, Field, Sheet } from "../components/ui";
+import { PharmacyCheckBadge } from "./Cart";
 
 export function CartsPage() {
   const { data } = useApp();
@@ -45,7 +46,7 @@ export function CartsPage() {
                   {s.cart.location} · {s.cart.cart_type} · {s.lines} items
                 </div>
               </div>
-              {s.dailyDue ? <span className="badge warn">Check due</span> : <span className="badge ok">Checked</span>}
+              <PharmacyCheckBadge summary={s} />
             </div>
             <div className="row wrap small" style={{ gap: 6, marginTop: 12 }}>
               {s.expired > 0 && <span className="badge danger">{s.expired} expired</span>}
@@ -55,7 +56,8 @@ export function CartsPage() {
               {s.openCheck && <span className="badge info">Check in progress</span>}
             </div>
             <div className="muted small" style={{ marginTop: 10 }}>
-              Last check: {s.lastCheck ? `${formatDateTime(s.lastCheck.submitted_at ?? s.lastCheck.created_at)} by ${s.lastCheck.performed_by_name}` : "never"}
+              Last pharmacy check: {s.lastCheck ? `${formatDateTime(s.lastCheck.submitted_at ?? s.lastCheck.created_at)} by ${s.lastCheck.performed_by_name}` : "none yet"}
+              {s.lastCheck && ` · ${s.lastCheck.issue_count} issue${s.lastCheck.issue_count === 1 ? "" : "s"} · ${s.lastCheck.status === "closed" ? "closed" : "open"}`}
             </div>
           </a>
         ))}

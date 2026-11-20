@@ -80,7 +80,7 @@ describe("wards", () => {
     const wardDrawer = all.drawers.find((x) => x.cart_id === ward.id)!;
     await expect(
       api.addCartItem(b, d.hospital.id, { cartId: ward.id, drawerId: wardDrawer.id, itemId: d.items[0].id, parQty: 1, lot: "", expiry: null }),
-    ).rejects.toThrow(/Hospital admin or pharmacist of this ward/);
+    ).rejects.toThrow(/Only the Hospital admin of this ward/);
   });
 
   it("keeps ward creation with the Super admin", async () => {
@@ -128,34 +128,65 @@ describe("staff IDs", () => {
   });
 });
 
-describe("nurse checks stay in nursing", () => {
-  it("is seen by the nurse and nursing manager, not by pharmacy or the admin", async () => {
-    const b = await seeded();
-    const nursing = (await as(b, NURSING_MGR)).d.checks.filter((c) => c.audience === "nursing");
-    expect(nursing).toHaveLength(1);
-    expect((await as(b, PHARM_MGR)).d.checks.some((c) => c.audience === "nursing")).toBe(false);
-    expect((await as(b, PHARM)).d.checks.some((c) => c.audience === "nursing")).toBe(false);
-    expect((await as(b, ADMIN)).d.checks).toHaveLength(0);
-  });
-
-  it("is closed only by the nursing manager", async () => {
-    const b = await seeded();
-    const { d } = await as(b, NURSE);
-    const check = d.checks.find((c) => c.audience === "nursing" && c.status === "submitted")!;
-    const { ws: nws } = await as(b, NURSE);
-    await expect(api.closeCheck(b, check, nws.user, "")).rejects.toThrow(/nursing manager/);
-    const { ws } = await as(b, NURSING_MGR);
-    await api.closeCheck(b, check, ws.user, "Atropine restocked");
-    expect((await api.loadCheck(b, check.id)).check.status).toBe("closed");
-  });
-
-  it("does not let the nurse check another ward", async () => {
+describe("nurses", () => {
+  it("cannot start a check; they see the pharmacy's checks of their ward, read-only", async () => {
     const b = await seeded();
     const { ws, d } = await as(b, NURSE);
-    const { d: all } = await as(b, ADMIN);
-    const er = all.carts.find((c) => c.cart_type === "Emergency")!;
-    await b.signIn(NURSE, api.DEMO_PASSWORD);
-    await expect(api.startCheck(b, { ...d, carts: all.carts }, ws.user, er.id, "daily", TODAY)).rejects.toThrow(/this ward/);
+    const icu = d.carts[0];
+    expect(icu.cart_type).toBe("ICU");
+    await expect(api.startCheck(b, d, ws.user, icu.id, "daily", TODAY)).rejects.toThrow(/pharmacist/);
+    const seen = d.checks.filter((c) => c.status !== "draft");
+    expect(seen.length).toBe(4);
+    expect(seen.every((c) => c.cart_id === icu.id && c.audience === "pharmacy")).toBe(true);
+    expect(seen.some((c) => c.issue_count > 0)).toBe(true);
+    const open = seen.find((c) => c.status === "submitted")!;
+    await expect(api.closeCheck(b, open, ws.user, "")).rejects.toThrow();
+    await expect(b.update("checks", { id: open.id }, { remarks: "x" })).rejects.toThrow(/role/);
+    const { lines } = await api.loadCheck(b, open.id);
+    await expect(api.closeObservation(b, lines[0].id, "x")).rejects.toThrow();
+  });
+
+  it("leaves the nursing manager with every ward's checks but no Staff rights", async () => {
+    const b = await seeded();
+    const { d } = await as(b, NURSING_MGR);
+    expect(new Set(d.checks.map((c) => c.cart_id)).size).toBe(3);
+    expect(d.invites).toHaveLength(0);
+    await expect(api.inviteMember(b, d, "x@cgh.org", "nurse", [d.carts[0].id])).rejects.toThrow(/give that role/);
+  });
+
+  it("update expiry dates of their ward, but not the items themselves", async () => {
+    const b = await seeded();
+    const { d } = await as(b, NURSE);
+    const row = d.cartItems[0];
+    await api.updateCartItem(b, row.id, { expiry_date: "2028-03-31", lot_number: "L1" });
+    expect((await as(b, NURSE)).d.cartItems.find((c) => c.id === row.id)).toMatchObject({ expiry_date: "2028-03-31" });
+    await expect(api.updateCartItem(b, row.id, { par_qty: 9 })).rejects.toThrow(/Hospital admin/);
+    await expect(api.removeCartItem(b, row.id)).rejects.toThrow(/Hospital admin/);
+  });
+
+  it("get the ward item list as CSV with code, description, strength, generic and category", async () => {
+    const b = await seeded();
+    const { d } = await as(b, NURSE);
+    const csv = api.wardItemsCsv(d, d.carts[0].id);
+    expect(csv.split("\r\n")[0]).toContain('"Code","Description","Strength","Generic","Category"');
+    expect(csv).toContain('"CC-M03","Inj. Atropine","1 mg/1 mL","Atropine sulfate"');
+  });
+});
+
+describe("item list", () => {
+  it("is each hospital's own, kept by the Hospital admin, with unique codes", async () => {
+    const b = await seeded();
+    const { d } = await as(b, ADMIN);
+    const base = { code: "cc-x1", name: "Inj. Test", strength: "1 mg", generic: "Testamine", category: "My own category", kind: "medicine" as const };
+    const id = await api.addItem(b, d.hospital.id, base, d.items);
+    await expect(api.addItem(b, d.hospital.id, base, [...d.items, { ...base, id, code: "CC-X1" } as never])).rejects.toThrow(/already used/);
+    const after = (await as(b, ADMIN)).d.items.find((i) => i.id === id)!;
+    expect(after).toMatchObject({ code: "CC-X1", generic: "Testamine", category: "My own category" });
+    const { d: rch } = await as(b, ADMIN, "RCH");
+    expect(rch.items.some((i) => i.id === id)).toBe(false);
+    const { d: pd } = await as(b, PHARM);
+    await expect(api.updateItem(b, id, base)).rejects.toThrow(/Hospital admin/);
+    expect(pd.items.length).toBeGreaterThan(0);
   });
 });
 

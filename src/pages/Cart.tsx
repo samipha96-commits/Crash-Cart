@@ -4,11 +4,13 @@ import * as api from "../lib/api";
 import { KIND_LABEL, can } from "../lib/catalog";
 import { formatDate, formatDateTime } from "../lib/dates";
 import { navigate } from "../lib/router";
-import type { Drawer, ItemKind } from "../lib/types";
+import type { Drawer } from "../lib/types";
 import { Icon } from "../components/icons";
 import { StartCheckSheet } from "../components/StartCheck";
 import { BackLink, Empty, ExpiryBadge, Field, Sheet, StatusBadge, TypeLabel } from "../components/ui";
 import { CartFormSheet } from "./Carts";
+import { EMPTY_ITEM, ItemFields } from "./Items";
+import { downloadText } from "../lib/download";
 
 export function CartPage({ id }: { id: string }) {
   const { backend, data, run } = useApp();
@@ -52,12 +54,18 @@ export function CartPage({ id }: { id: string }) {
             {cart.seal_number ? ` · Seal ${cart.seal_number}` : ""}
           </p>
           <div className="row wrap" style={{ gap: 6, marginTop: 8 }}>
-            {summary.dailyDue ? <span className="badge warn">Check due</span> : <span className="badge ok">Up to date</span>}
+            <PharmacyCheckBadge summary={summary} />
             {summary.expired > 0 && <span className="badge danger">{summary.expired} expired</span>}
             {summary.soon > 0 && <span className="badge warn">{summary.soon} expiring soon</span>}
           </div>
         </div>
         <div className="row wrap">
+          <button
+            className="btn small"
+            onClick={() => downloadText(`${data.hospital.code}-${cart.location.replace(/\W+/g, "-")}-crash-cart-items.csv`, api.wardItemsCsv(data, id))}
+          >
+            <Icon.download /> Item list CSV
+          </button>
           {manage && (
             <button className="btn small" onClick={() => setEditing(true)}>
               Edit
@@ -102,10 +110,11 @@ export function CartPage({ id }: { id: string }) {
                   <>
                     <div className="list-main">
                       <div className="t">
+                        {r.item.code && <span className="muted small">{r.item.code} · </span>}
                         {r.item.name} {r.item.strength && <span className="muted small">{r.item.strength}</span>}
                       </div>
                       <div className="s">
-                        Par {r.cartItem.par_qty} · {KIND_LABEL[r.item.kind]}
+                        Qty {r.cartItem.par_qty} · {r.item.generic || KIND_LABEL[r.item.kind]}
                         {r.cartItem.lot_number ? ` · Lot ${r.cartItem.lot_number}` : ""}
                         {r.cartItem.expiry_date ? ` · Exp ${formatDate(r.cartItem.expiry_date)}` : ""}
                       </div>
@@ -188,7 +197,7 @@ function AddItemSheet({ cartId, drawer, onClose }: { cartId: string; drawer: Dra
   const { backend, data, run } = useApp();
   const active = data.items.filter((i) => i.is_active);
   const [itemId, setItemId] = useState(active[0]?.id ?? "__new");
-  const [newItem, setNewItem] = useState({ name: "", kind: "medicine" as ItemKind, strength: "", category: "" });
+  const [newItem, setNewItem] = useState<api.ItemInput>(EMPTY_ITEM);
   const [qty, setQty] = useState(1);
   const [lot, setLot] = useState("");
   const [expiry, setExpiry] = useState("");
@@ -221,6 +230,7 @@ function AddItemSheet({ cartId, drawer, onClose }: { cartId: string; drawer: Dra
           <select className="input" value={itemId} onChange={(e) => setItemId(e.target.value)}>
             {active.map((i) => (
               <option key={i.id} value={i.id}>
+                {i.code ? `${i.code} · ` : ""}
                 {i.name}
                 {i.strength ? ` (${i.strength})` : ""}
               </option>
@@ -230,21 +240,7 @@ function AddItemSheet({ cartId, drawer, onClose }: { cartId: string; drawer: Dra
         </Field>
         {itemId === "__new" && (
           <div className="card card-pad" style={{ marginBottom: 12, background: "var(--surface-2)" }}>
-            <Field label="Item name">
-              <input className="input" value={newItem.name} onChange={(e) => setNewItem({ ...newItem, name: e.target.value })} required />
-            </Field>
-            <div className="grid cols-2">
-              <Field label="Type">
-                <select className="input" value={newItem.kind} onChange={(e) => setNewItem({ ...newItem, kind: e.target.value as ItemKind })}>
-                  <option value="medicine">Medicine</option>
-                  <option value="surgical">Surgical</option>
-                  <option value="misc">Other</option>
-                </select>
-              </Field>
-              <Field label="Strength / size">
-                <input className="input" value={newItem.strength} onChange={(e) => setNewItem({ ...newItem, strength: e.target.value })} />
-              </Field>
-            </div>
+            <ItemFields v={newItem} set={setNewItem} />
           </div>
         )}
         <div className="grid cols-2">
@@ -356,5 +352,19 @@ function RenameFloorSheet({ drawer, onClose }: { drawer: Drawer; onClose: () => 
         <button className="btn primary block">Save</button>
       </form>
     </Sheet>
+  );
+}
+
+/** When the pharmacy last checked this ward, or that a check is due this month. */
+export function PharmacyCheckBadge({ summary }: { summary: api.CartSummary }) {
+  const last = summary.lastCheck;
+  const when = last ? formatDate((last.submitted_at ?? last.created_at).slice(0, 10)) : "";
+  return summary.dailyDue ? (
+    <span className="badge warn">{last ? `Pharmacy check due · last ${when}` : "Pharmacy check due"}</span>
+  ) : (
+    <span className="badge ok">
+      Checked by pharmacy {when}
+      {last?.performed_by_name ? ` · ${last.performed_by_name}` : ""}
+    </span>
   );
 }

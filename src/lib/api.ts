@@ -1,6 +1,6 @@
 import type { Backend } from "./backend/types";
 import { ALL_WARDS, DRAWER_NAMES, SINGLE_WARD, STARTER_CARTS, STARTER_ITEMS, audienceOf, can, type Perm } from "./catalog";
-import { addDays, expiryState, hoursSince, todayISO, type ExpiryState } from "./dates";
+import { addDays, expiryState, todayISO, type ExpiryState } from "./dates";
 import type {
   Cart,
   CartItem,
@@ -133,7 +133,7 @@ export interface CartSummary {
   lastCheck: Check | null;
   openCheck: Check | null;
   openIssues: number;
-  /** Nursing: no completed check in the last 24 hours. Pharmacy: no audit this month. */
+  /** No pharmacy check of this ward this month. */
   dailyDue: boolean;
 }
 
@@ -142,7 +142,8 @@ export function cartSummaries(d: HospitalData, today = todayISO(), nowMs = Date.
   return d.carts.map((cart) => {
     const mine = rows.filter((r) => r.cart.id === cart.id);
     const checks = d.checks.filter((c) => c.cart_id === cart.id);
-    const done = checks.find((c) => c.status !== "draft") ?? null;
+    // The pharmacy's monthly check is what counts now; nurses no longer check in the app.
+    const done = checks.find((c) => c.status !== "draft" && c.audience === "pharmacy") ?? null;
     const openCheck = checks.find((c) => c.status === "draft") ?? null;
     const openCheckIds = new Set(checks.filter((c) => c.status !== "closed").map((c) => c.id));
     return {
@@ -154,11 +155,8 @@ export function cartSummaries(d: HospitalData, today = todayISO(), nowMs = Date.
       lastCheck: done,
       openCheck,
       openIssues: d.openLines.filter((l) => openCheckIds.has(l.check_id) && l.line_status !== "present").length,
-      // Nurses check daily; pharmacists audit each ward once a month.
-      dailyDue:
-        audienceOf(d.perm.role) === "pharmacy" && !d.perm.isSuper
-          ? !done || (done.submitted_at ?? done.created_at).slice(0, 7) !== new Date(nowMs).toISOString().slice(0, 7)
-          : !done || hoursSince(done.submitted_at ?? done.created_at, nowMs) >= 24,
+      // Pharmacists check each ward once a month.
+      dailyDue: !done || (done.submitted_at ?? done.created_at).slice(0, 7) !== new Date(nowMs).toISOString().slice(0, 7),
     };
   });
 }
@@ -192,7 +190,9 @@ export async function createHospital(
   const items: Item[] = STARTER_ITEMS.map((s) => ({
     id: uuid(),
     hospital_id: hid,
+    code: s.code ?? "",
     name: s.name,
+    generic: s.generic ?? "",
     kind: s.kind,
     category: s.category,
     strength: s.strength,
@@ -277,7 +277,7 @@ export async function addCartItem(
     cartId: string;
     drawerId: string;
     itemId?: string;
-    newItem?: { name: string; kind: ItemKind; strength: string; category: string };
+    newItem?: ItemInput;
     parQty: number;
     lot: string;
     expiry: string | null;
@@ -286,7 +286,7 @@ export async function addCartItem(
   let itemId = input.itemId;
   if (!itemId) {
     if (!input.newItem?.name.trim()) throw new Error("Pick an item or type a new one.");
-    itemId = await addItem(b, hid, input.newItem);
+    itemId = await addItem(b, hid, input.newItem!);
   }
   await b.insert("cart_items", [
     {
@@ -319,24 +319,50 @@ export async function removeCartItem(b: Backend, id: string) {
 
 // ------------------------------------------------------------------ item catalogue
 
-export async function addItem(
-  b: Backend,
-  hid: string,
-  input: { name: string; kind: ItemKind; strength: string; category: string },
-): Promise<string> {
-  if (!input.name.trim()) throw new Error("Enter the item name.");
+export interface ItemInput {
+  code: string;
+  name: string;
+  strength: string;
+  generic: string;
+  category: string;
+  kind: ItemKind;
+}
+
+function cleanItem(input: ItemInput) {
+  if (!input.name.trim()) throw new Error("Enter the item description.");
+  return {
+    code: input.code.trim().toUpperCase(),
+    name: input.name.trim(),
+    strength: input.strength.trim(),
+    generic: input.generic.trim(),
+    category: input.category.trim() || "Other",
+    kind: input.kind,
+  };
+}
+
+export async function addItem(b: Backend, hid: string, input: ItemInput, existing: Item[] = []): Promise<string> {
+  const v = cleanItem(input);
+  if (v.code && existing.some((i) => i.code.toUpperCase() === v.code)) throw new Error(`Item code ${v.code} is already used.`);
   const id = uuid();
-  await b.insert("items", [
-    {
-      id,
-      hospital_id: hid,
-      name: input.name.trim(),
-      kind: input.kind,
-      strength: input.strength.trim(),
-      category: input.category.trim() || "General",
-    },
-  ]);
+  await b.insert("items", [{ id, hospital_id: hid, ...v }]);
   return id;
+}
+
+export async function updateItem(b: Backend, id: string, input: ItemInput, existing: Item[] = []) {
+  const v = cleanItem(input);
+  if (v.code && existing.some((i) => i.id !== id && i.code.toUpperCase() === v.code)) throw new Error(`Item code ${v.code} is already used.`);
+  await b.update("items", { id }, v);
+}
+
+/** The ward's crash cart list as CSV, for nurses to check the cart against. */
+export function wardItemsCsv(d: HospitalData, cartId: string): string {
+  const rows = stockRows(d)
+    .filter((r) => r.cart.id === cartId)
+    .sort((a, b) => a.drawer.sort_order - b.drawer.sort_order || a.item.code.localeCompare(b.item.code) || a.item.name.localeCompare(b.item.name));
+  return toCsv(
+    ["Drawer", "Code", "Description", "Strength", "Generic", "Category", "Approved qty", "Lot", "Expiry", "Qty present", "Remarks"],
+    rows.map((r) => [r.drawer.name, r.item.code, r.item.name, r.item.strength, r.item.generic, r.item.category, r.cartItem.par_qty, r.cartItem.lot_number, r.cartItem.expiry_date ?? "", "", ""]),
+  );
 }
 
 export async function setItemActive(b: Backend, id: string, active: boolean) {
@@ -376,6 +402,7 @@ export async function startCheck(
     hospital_id: d.hospital.id,
     check_id: checkId,
     cart_item_id: r.cartItem.id,
+    item_code: r.item.code,
     item_name: r.item.name,
     strength: r.item.strength,
     drawer_name: r.drawer.name,
@@ -404,8 +431,10 @@ export async function markAllPresent(b: Backend, lines: CheckLine[]) {
 }
 
 export async function submitCheck(b: Backend, check: Check, input: { seal_number: string; remarks: string }, at = now()) {
+  const lines = await b.select("check_lines", { check_id: check.id });
   await b.update("checks", { id: check.id }, {
     status: "submitted",
+    issue_count: lines.filter((l) => l.line_status !== "present").length,
     seal_number: input.seal_number.trim(),
     remarks: input.remarks.trim(),
     submitted_at: at,
@@ -532,12 +561,12 @@ export async function seedDemo(b: Backend & { addSuperAdmin(email: string): void
   const expiryFor = (i: number) => (i % 7 === 3 ? null : addDays(today, offsets[(i * 5) % offsets.length]));
   const general = await createHospital(
     b,
-    { name: "City General Hospital", code: "CGH", starterCarts: true, theme: { preset: "teal", corners: "rounded", headings: "serif" } },
+    { name: "City General Hospital", code: "CGH", starterCarts: true, theme: { design: "classic", preset: "teal" } },
     expiryFor,
   );
   const riverside = await createHospital(
     b,
-    { name: "Riverside Children's Hospital", code: "RCH", starterCarts: true, theme: { preset: "plum", corners: "soft", headings: "sans", density: "compact" } },
+    { name: "Riverside Children's Hospital", code: "RCH", starterCarts: true, theme: { design: "friendly", preset: "plum" } },
     (i) => addDays(today, 30 + ((i * 37) % 500)),
   );
 
@@ -564,18 +593,6 @@ export async function seedDemo(b: Backend & { addSuperAdmin(email: string): void
     await b.signIn(u.email, DEMO_PASSWORD);
     await b.acceptInvites();
   }
-
-  // The nurse has done today's check on the ICU cart and found a gap (seen by nursing only).
-  const nurse = DEMO_USERS.find((u) => u.role === "nurse")!;
-  await b.signIn(nurse.email, DEMO_PASSWORD);
-  aws = (await loadWorkspace(b))!;
-  d = await loadHospital(b, h, permFor(aws, h.id)!);
-  const icu = d.carts.find((c) => c.cart_type === "ICU")!;
-  const checkId = await startCheck(b, d, aws.user, icu.id, "daily", today);
-  const { check, lines } = await loadCheck(b, checkId);
-  const atropine = lines.find((l) => l.item_name === "Atropine");
-  if (atropine) await saveLine(b, atropine.id, { line_status: "short", found_qty: 1, remarks: "Used in code, pharmacy informed" });
-  await submitCheck(b, check, { seal_number: "SEAL-40211", remarks: "Seal intact before check. Atropine short." });
 
   // Four months of pharmacist audits so the Reports tab has history to compare.
   const pharmacist = DEMO_USERS.find((u) => u.role === "pharmacy" && u.wards === "all")!;

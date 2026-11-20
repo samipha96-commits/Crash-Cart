@@ -1,6 +1,8 @@
 import type { Audience, CheckType, ItemKind, LineStatus, Role } from "./types";
 
 export interface StarterItem {
+  code?: string;
+  generic?: string;
   name: string;
   kind: ItemKind;
   category: string;
@@ -12,32 +14,48 @@ export interface StarterItem {
 
 /** Standard adult crash-cart contents. Each hospital can edit its own list. */
 export const STARTER_ITEMS: StarterItem[] = [
-  { name: "Epinephrine", kind: "medicine", category: "ACLS", strength: "1 mg/10 mL", floor: 0, qty: 10 },
-  { name: "Amiodarone", kind: "medicine", category: "ACLS", strength: "150 mg/3 mL", floor: 0, qty: 3 },
-  { name: "Atropine", kind: "medicine", category: "ACLS", strength: "1 mg", floor: 0, qty: 3 },
-  { name: "Adenosine", kind: "medicine", category: "ACLS", strength: "6 mg/2 mL", floor: 0, qty: 5 },
-  { name: "Lidocaine", kind: "medicine", category: "ACLS", strength: "100 mg", floor: 0, qty: 2 },
-  { name: "Sodium bicarbonate", kind: "medicine", category: "ACLS", strength: "8.4% 50 mL", floor: 0, qty: 2 },
-  { name: "Calcium chloride", kind: "medicine", category: "ACLS", strength: "10% 10 mL", floor: 0, qty: 2 },
-  { name: "Magnesium sulfate", kind: "medicine", category: "ACLS", strength: "2 g", floor: 0, qty: 2 },
-  { name: "Dextrose", kind: "medicine", category: "Metabolic", strength: "50% 50 mL", floor: 0, qty: 2 },
-  { name: "Naloxone", kind: "medicine", category: "Reversal", strength: "0.4 mg", floor: 0, qty: 2 },
-  { name: "Norepinephrine", kind: "medicine", category: "Vasopressor", strength: "4 mg", floor: 0, qty: 2 },
-  { name: "Endotracheal tubes (assorted)", kind: "surgical", category: "Airway", strength: "", floor: 1, qty: 6 },
-  { name: "Laryngoscope with blades", kind: "surgical", category: "Airway", strength: "", floor: 1, qty: 1 },
-  { name: "Stylet", kind: "surgical", category: "Airway", strength: "", floor: 1, qty: 2 },
-  { name: "Oropharyngeal airways", kind: "surgical", category: "Airway", strength: "", floor: 1, qty: 4 },
-  { name: "Bag-valve-mask", kind: "surgical", category: "Airway", strength: "", floor: 1, qty: 1 },
-  { name: "Suction catheters", kind: "surgical", category: "Airway", strength: "", floor: 1, qty: 4 },
-  { name: "IV cannulas (assorted)", kind: "surgical", category: "Access", strength: "", floor: 2, qty: 10 },
-  { name: "IV administration sets", kind: "surgical", category: "Access", strength: "", floor: 2, qty: 4 },
-  { name: "Syringes (assorted)", kind: "surgical", category: "Access", strength: "", floor: 2, qty: 20 },
-  { name: "Normal saline", kind: "medicine", category: "Fluid", strength: "500 mL", floor: 2, qty: 4 },
-  { name: "Defibrillator pads", kind: "surgical", category: "Defib", strength: "", floor: 3, qty: 2 },
-  { name: "ECG electrodes", kind: "surgical", category: "Defib", strength: "", floor: 3, qty: 2 },
-  { name: "Sterile gloves", kind: "misc", category: "PPE", strength: "", floor: 3, qty: 4 },
-  { name: "Gauze pads", kind: "misc", category: "Dressing", strength: "", floor: 3, qty: 10 },
-  { name: "Adhesive tape", kind: "misc", category: "Dressing", strength: "", floor: 3, qty: 2 },
+  { code: "CC-M01", name: "Inj. Epinephrine", generic: "Epinephrine (adrenaline)", category: "Emergency drugs", strength: "1 mg/10 mL", kind: "medicine", floor: 0, qty: 10 },
+  { code: "CC-M02", name: "Inj. Amiodarone", generic: "Amiodarone", category: "Antiarrhythmic", strength: "150 mg/3 mL", kind: "medicine", floor: 0, qty: 3 },
+  { code: "CC-M03", name: "Inj. Atropine", generic: "Atropine sulfate", category: "Emergency drugs", strength: "1 mg/1 mL", kind: "medicine", floor: 0, qty: 3 },
+  { code: "CC-M04", name: "Inj. Adenosine", generic: "Adenosine", category: "Antiarrhythmic", strength: "6 mg/2 mL", kind: "medicine", floor: 0, qty: 5 },
+  { code: "CC-M05", name: "Inj. Lidocaine 2%", generic: "Lidocaine", category: "Antiarrhythmic", strength: "100 mg/5 mL", kind: "medicine", floor: 0, qty: 2 },
+  { code: "CC-M06", name: "Inj. Sodium bicarbonate 8.4%", generic: "Sodium bicarbonate", category: "Electrolytes & metabolic", strength: "50 mL", kind: "medicine", floor: 0, qty: 2 },
+  { code: "CC-M07", name: "Inj. Calcium chloride 10%", generic: "Calcium chloride", category: "Electrolytes & metabolic", strength: "10 mL", kind: "medicine", floor: 0, qty: 2 },
+  { code: "CC-M08", name: "Inj. Magnesium sulfate", generic: "Magnesium sulfate", category: "Electrolytes & metabolic", strength: "2 g", kind: "medicine", floor: 0, qty: 2 },
+  { code: "CC-M09", name: "Inj. Dextrose 50%", generic: "Glucose", category: "Electrolytes & metabolic", strength: "50 mL", kind: "medicine", floor: 0, qty: 2 },
+  { code: "CC-M10", name: "Inj. Naloxone", generic: "Naloxone", category: "Reversal agent", strength: "0.4 mg/1 mL", kind: "medicine", floor: 0, qty: 2 },
+  { code: "CC-M11", name: "Inj. Norepinephrine", generic: "Norepinephrine (noradrenaline)", category: "Vasopressor", strength: "4 mg/4 mL", kind: "medicine", floor: 0, qty: 2 },
+  { code: "CC-A01", name: "Endotracheal tubes (assorted)", generic: "", category: "Airway", strength: "", kind: "surgical", floor: 1, qty: 6 },
+  { code: "CC-A02", name: "Laryngoscope with blades", generic: "", category: "Airway", strength: "", kind: "surgical", floor: 1, qty: 1 },
+  { code: "CC-A03", name: "Stylet", generic: "", category: "Airway", strength: "", kind: "surgical", floor: 1, qty: 2 },
+  { code: "CC-A04", name: "Oropharyngeal airways", generic: "", category: "Airway", strength: "# 2, 3, 4, 5", kind: "surgical", floor: 1, qty: 4 },
+  { code: "CC-A05", name: "Bag-valve-mask", generic: "", category: "Airway", strength: "Adult", kind: "surgical", floor: 1, qty: 1 },
+  { code: "CC-A06", name: "Suction catheters", generic: "", category: "Airway", strength: "12-18 Fr", kind: "surgical", floor: 1, qty: 4 },
+  { code: "CC-V01", name: "IV cannulas (assorted)", generic: "", category: "IV access", strength: "16-24 G", kind: "surgical", floor: 2, qty: 10 },
+  { code: "CC-V02", name: "IV administration sets", generic: "", category: "IV access", strength: "", kind: "surgical", floor: 2, qty: 4 },
+  { code: "CC-V03", name: "Syringes (assorted)", generic: "", category: "IV access", strength: "1-50 mL", kind: "surgical", floor: 2, qty: 20 },
+  { code: "CC-F01", name: "Inf. Normal saline 0.9%", generic: "Sodium chloride", category: "IV fluids", strength: "500 mL", kind: "medicine", floor: 2, qty: 4 },
+  { code: "CC-D01", name: "Defibrillator pads", generic: "", category: "Monitoring & defibrillation", strength: "Adult", kind: "surgical", floor: 3, qty: 2 },
+  { code: "CC-D02", name: "ECG electrodes", generic: "", category: "Monitoring & defibrillation", strength: "Adult", kind: "surgical", floor: 3, qty: 2 },
+  { code: "CC-P01", name: "Sterile gloves", generic: "", category: "PPE", strength: "# 6.5-7.5", kind: "misc", floor: 3, qty: 4 },
+  { code: "CC-P02", name: "Gauze pads", generic: "", category: "Dressing", strength: "4 x 4", kind: "misc", floor: 3, qty: 10 },
+  { code: "CC-P03", name: "Adhesive tape", generic: "", category: "Dressing", strength: "", kind: "misc", floor: 3, qty: 2 },
+];
+
+/** Default item categories; each hospital can type its own too. */
+export const DEFAULT_CATEGORIES = [
+  "Emergency drugs",
+  "Antiarrhythmic",
+  "Vasopressor",
+  "Reversal agent",
+  "Electrolytes & metabolic",
+  "IV fluids",
+  "Airway",
+  "IV access",
+  "Monitoring & defibrillation",
+  "PPE",
+  "Dressing",
+  "Other",
 ];
 
 export const DRAWER_NAMES = ["Floor 1 · Medicines", "Floor 2 · Airway", "Floor 3 · IV access", "Floor 4 · Defib & PPE"];
@@ -65,8 +83,8 @@ export const ROLE_LABEL: Record<Role, string> = {
 
 export const ROLE_HELP: Record<Role, string> = {
   hospital_admin: "Sets the crash cart items of their wards and creates nurse and pharmacist IDs",
-  nurse: "Assesses the crash cart of one ward; the report goes to the nursing manager only",
-  nursing_manager: "Reviews and closes nurses' checks for every ward",
+  nurse: "One ward: item list (CSV) to check the cart against, updates expiry dates, sees the pharmacy's checks",
+  nursing_manager: "Every ward: item lists, expiry dates and the pharmacy's checks",
   pharmacy: "Monthly audits of their wards, closes observations, ward reports",
   pharmacy_manager: "Reviews pharmacists' audits and sees the reports of every ward",
 };
@@ -117,12 +135,12 @@ export const can = {
   /** Rename a cart, edit its floors and items. */
   setItems: (p: Perm, cartId?: string) =>
     p.isSuper || (p.role === "hospital_admin" && (!cartId || coversWard(p, cartId))),
-  /** Update lot and expiry when stock is replaced. */
+  /** Update lot and expiry dates (Expiry tab). */
   restock: (p: Perm, cartId?: string) =>
-    can.setItems(p, cartId) || (p.role === "pharmacy" && (!cartId || coversWard(p, cartId))),
-  /** Start a check: nurses assess their ward, pharmacists audit theirs. */
-  runChecks: (p: Perm, cartId?: string) =>
-    !p.isSuper && (p.role === "nurse" || p.role === "pharmacy") && (!cartId || coversWard(p, cartId)),
+    can.setItems(p, cartId) ||
+    ((p.role === "pharmacy" || p.role === "nurse" || p.role === "nursing_manager") && (!cartId || coversWard(p, cartId))),
+  /** Start a check. Only pharmacists check carts; nurses check against the CSV item list off the app. */
+  runChecks: (p: Perm, cartId?: string) => !p.isSuper && p.role === "pharmacy" && (!cartId || coversWard(p, cartId)),
   /** Close a check of this audience. */
   review: (p: Perm, audience: Audience) =>
     p.isSuper || (audience === "nursing" ? p.role === "nursing_manager" : p.role === "pharmacy_manager"),

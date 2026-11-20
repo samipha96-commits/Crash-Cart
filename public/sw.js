@@ -1,6 +1,6 @@
 // Crash Cart service worker: keeps the app shell available offline.
 // Data requests (Supabase) always go to the network.
-const CACHE = "crash-cart-v2";
+const CACHE = "crash-cart-v3";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((c) => c.addAll(["./", "./index.html", "./manifest.webmanifest", "./icons/icon.svg"])));
