@@ -29,6 +29,18 @@ export const Icon = {
       <path d="M9 4V2.8h6V4M8.5 12.5l2.2 2.2 4.8-4.8" />
     </Svg>
   ),
+  chart: () => (
+    <Svg>
+      <path d="M4 20V4M4 20h16" />
+      <path d="M8 16v-4M12 16V8M16 16v-6" />
+    </Svg>
+  ),
+  excel: () => (
+    <Svg>
+      <rect x="4" y="3" width="16" height="18" rx="2" />
+      <path d="M9 8l6 8M15 8l-6 8" />
+    </Svg>
+  ),
   clock: () => (
     <Svg>
       <circle cx="12" cy="12" r="9" />

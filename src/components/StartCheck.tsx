@@ -1,17 +1,19 @@
 import { useState } from "react";
 import { useApp } from "../lib/app-context";
 import { startCheck } from "../lib/api";
-import { CHECK_TYPE_LABEL } from "../lib/catalog";
+import { CHECK_TYPE_LABEL, audienceOf, can } from "../lib/catalog";
 import { navigate } from "../lib/router";
 import type { CheckType } from "../lib/types";
 import { Field, Sheet } from "./ui";
 
 export function StartCheckSheet({ cartId, onClose }: { cartId?: string; onClose: () => void }) {
   const { backend, data, ws, toast, reload } = useApp();
-  const [cart, setCart] = useState(cartId ?? data.carts[0]?.id ?? "");
-  const [type, setType] = useState<CheckType>("daily");
+  const carts = data.carts.filter((c) => can.runChecks(data.perm, c.id));
+  const [cart, setCart] = useState(cartId ?? carts[0]?.id ?? "");
+  // Pharmacists do the monthly audit; nurses usually the daily check.
+  const [type, setType] = useState<CheckType>(data.perm.role === "pharmacy" ? "monthly" : "daily");
   const [busy, setBusy] = useState(false);
-  const open = data.checks.find((c) => c.cart_id === cart && c.status === "draft");
+  const open = data.checks.find((c) => c.cart_id === cart && c.status === "draft" && c.audience === audienceOf(data.perm.role));
 
   async function go() {
     if (open) {
@@ -32,10 +34,10 @@ export function StartCheckSheet({ cartId, onClose }: { cartId?: string; onClose:
   }
 
   return (
-    <Sheet title="Start a check" onClose={onClose}>
-      <Field label="Cart">
+    <Sheet title={data.perm.role === "pharmacy" ? "Start an audit" : "Start a check"} onClose={onClose}>
+      <Field label="Ward">
         <select className="input" value={cart} onChange={(e) => setCart(e.target.value)}>
-          {data.carts.map((c) => (
+          {carts.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name} · {c.location}
             </option>

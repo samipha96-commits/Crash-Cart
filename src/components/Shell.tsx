@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useApp } from "../lib/app-context";
 import { cartSummaries } from "../lib/api";
-import { ROLE_LABEL } from "../lib/catalog";
+import { ROLE_LABEL, can } from "../lib/catalog";
 import { usePath } from "../lib/router";
 import { BrandMark, Icon } from "./icons";
 
@@ -10,21 +10,34 @@ export function Shell({ children }: { children: ReactNode }) {
   const path = usePath();
   const summaries = cartSummaries(data);
   const due = summaries.filter((s) => s.dailyDue).length;
-  const review = data.checks.filter((c) => c.status === "submitted").length;
+  const p = data.perm;
+  const review = data.checks.filter((c) => needsMe(c.status, c.audience)).length;
   const expiring = summaries.reduce((n, s) => n + s.expired + s.soon, 0);
+  const roleLabel = p.isSuper ? "Super admin" : p.role ? ROLE_LABEL[p.role] : "";
 
-  const isOn = (p: string) => (p === "/" ? path === "/" : path.startsWith(p));
-  const nav = [
-    { href: "/", label: "Home", icon: <Icon.home />, count: 0 },
-    { href: "/carts", label: "Carts", icon: <Icon.cart />, count: due },
-    { href: "/checks", label: "Checks", icon: <Icon.check />, count: review },
-    { href: "/expiry", label: "Expiry", icon: <Icon.clock />, count: expiring },
-  ];
+  // What each role needs most sits in the tab bar; the rest goes under More.
+  function needsMe(status: string, audience: "nursing" | "pharmacy") {
+    if (can.review(p, audience) && (audience === "nursing" ? status === "submitted" : status === "in_review")) return true;
+    return p.role === "pharmacy" && audience === "pharmacy" && status === "submitted";
+  }
+  // Nurses and the nursing manager see the pharmacy's checks of their wards (read-only).
+  const seesChecks = p.isSuper || p.role !== "hospital_admin";
+  const isOn = (h: string) => (h === "/" ? path === "/" : path.startsWith(h));
+  const all = [
+    { href: "/", label: "Home", icon: <Icon.home />, count: 0, show: true },
+    { href: "/carts", label: "Wards", icon: <Icon.cart />, count: can.runChecks(p) ? due : 0, show: true },
+    { href: "/checks", label: "Checks", icon: <Icon.check />, count: review, show: seesChecks },
+    { href: "/reports", label: "Reports", icon: <Icon.chart />, count: 0, show: can.reports(p) },
+    { href: "/expiry", label: "Expiry", icon: <Icon.clock />, count: expiring, show: true },
+    { href: "/team", label: p.isSuper ? "Staff & rights" : "Staff", icon: <Icon.users />, count: 0, show: can.manageStaff(p) },
+  ].filter((n) => n.show);
+  const nav = all.slice(0, 4);
   const extra = [
+    ...all.slice(4).map((n) => ({ href: n.href, label: n.label, icon: n.icon })),
     { href: "/items", label: "Item list", icon: <Icon.pill /> },
-    { href: "/team", label: ws.isSuper ? "Staff & rights" : "Staff", icon: <Icon.users /> },
-    { href: "/more", label: "Settings", icon: <Icon.settings /> },
+    { href: "/more", label: p.isSuper ? "Portal & settings" : "Settings", icon: <Icon.settings /> },
   ];
+  const brand = data.hospital.logo_url ? <img className="brand-logo" src={data.hospital.logo_url} alt="" /> : <BrandMark />;
 
   const picker =
     ws.hospitals.length > 1 ? (
@@ -45,7 +58,7 @@ export function Shell({ children }: { children: ReactNode }) {
     <div className="app">
       <aside className="sidebar">
         <div className="brand">
-          <BrandMark /> Crash Cart
+          {brand} <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{data.hospital.logo_url ? data.hospital.code : "Crash Cart"}</span>
         </div>
         {nav.map((n) => (
           <a key={n.href} href={`#${n.href}`} className={`side-link ${isOn(n.href) ? "active" : ""}`}>
@@ -53,18 +66,18 @@ export function Shell({ children }: { children: ReactNode }) {
             {n.count > 0 && <span className="count">{n.count}</span>}
           </a>
         ))}
-        <div style={{ height: 14 }} />
+        <div className="nav-gap" style={{ height: 14 }} />
         {extra.map((n) => (
           <a key={n.href} href={`#${n.href}`} className={`side-link ${isOn(n.href) ? "active" : ""}`}>
             {n.icon} {n.label}
           </a>
         ))}
         <div className="spacer" />
-        <div className="small muted" style={{ padding: "0 8px" }}>
+        <div className="small muted side-user" style={{ padding: "0 8px" }}>
           <div className="strong" style={{ color: "var(--ink)" }}>
             {ws.user.name || ws.user.email}
           </div>
-          <div>{ws.isSuper ? "Super admin" : ROLE_LABEL[data.role]}</div>
+          <div>{roleLabel}</div>
           <button className="btn ghost small" style={{ padding: 0, marginTop: 6 }} onClick={() => void backend.signOut()}>
             <Icon.logout /> Sign out
           </button>
@@ -76,11 +89,9 @@ export function Shell({ children }: { children: ReactNode }) {
           <div className="banner no-print">Demo mode: sample data, saved on this device only.</div>
         )}
         <header className="topbar no-print">
-          <div className="brand">
-            <BrandMark />
-          </div>
+          <div className="brand">{brand}</div>
           <div style={{ minWidth: 0, flex: 1, display: "flex" }}>{picker}</div>
-          <span className="badge primary">{ws.isSuper ? "Super admin" : ROLE_LABEL[data.role]}</span>
+          <span className="badge primary">{roleLabel}</span>
         </header>
         {children}
       </div>
@@ -93,7 +104,7 @@ export function Shell({ children }: { children: ReactNode }) {
             {n.count > 0 && <span className="dot">{n.count > 99 ? "99+" : n.count}</span>}
           </a>
         ))}
-        <a href="#/more" className={`tab ${["/more", "/items", "/team"].some(isOn) ? "active" : ""}`}>
+        <a href="#/more" className={`tab ${["/more", ...extra.map((x) => x.href)].some(isOn) ? "active" : ""}`}>
           <Icon.more />
           More
         </a>

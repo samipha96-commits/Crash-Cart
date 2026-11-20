@@ -65,7 +65,7 @@ export function Onboarding({
             <h2>Waiting for access</h2>
             <p className="muted">
               You're signed in as <strong>{user.email}</strong>, but you haven't been given access to a hospital yet. Ask your
-              Super admin to add this email with your role. You'll get in as soon as they do; just sign in again.
+              Hospital admin (or the Super admin) to create your ID with this email. You'll get in as soon as they do; just sign in again.
             </p>
             <button className="btn primary block" onClick={() => window.location.reload()}>
               Check again

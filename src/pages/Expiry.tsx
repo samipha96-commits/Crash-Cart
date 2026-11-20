@@ -49,7 +49,7 @@ export function ExpiryPage() {
       <div className="page-head">
         <div>
           <h1>Expiry tracker</h1>
-          <p>Every item in every cart, soonest expiry first. Change the warning window in Settings.</p>
+          <p>Every item in your wards' crash carts, soonest expiry first. Tap an item to update its expiry date.</p>
         </div>
         <button className="btn small" onClick={exportCsv}>
           <Icon.download /> Export CSV
@@ -93,7 +93,7 @@ export function ExpiryPage() {
               <ExpiryBadge date={r.cartItem.expiry_date} windowDays={data.hospital.near_expiry_days} />
             </>
           );
-          return can.restock(data.role) ? (
+          return can.restock(data.perm, r.cart.id) ? (
             <button key={r.cartItem.id} className="list-item" onClick={() => setEditing(r)}>
               {body}
             </button>
@@ -114,14 +114,14 @@ function RestockSheet({ row, onClose }: { row: api.StockRow; onClose: () => void
   const [expiry, setExpiry] = useState(row.cartItem.expiry_date ?? "");
   const [lot, setLot] = useState(row.cartItem.lot_number);
   return (
-    <Sheet title={`Replace ${row.item.name}`} onClose={onClose}>
+    <Sheet title={`Update expiry · ${row.item.name}`} onClose={onClose}>
       <p className="muted small" style={{ marginTop: -6 }}>
-        {row.cart.name} · {row.drawer.name}. Enter the new stock's details after replacing it.
+        {row.cart.name} · {row.drawer.name}. Enter the expiry date (and lot) of the stock now in the cart.
       </p>
       <form
         onSubmit={async (e) => {
           e.preventDefault();
-          if (await run(() => api.updateCartItem(backend, row.cartItem.id, { expiry_date: expiry || null, lot_number: lot }), "Restocked")) onClose();
+          if (await run(() => api.updateCartItem(backend, row.cartItem.id, { expiry_date: expiry || null, lot_number: lot }), "Expiry updated")) onClose();
         }}
       >
         <Field label="New expiry date">

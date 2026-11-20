@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useApp } from "../lib/app-context";
 import * as api from "../lib/api";
-import { CHECK_TYPE_LABEL, LINE_STATUSES, LINE_STATUS_LABEL, can } from "../lib/catalog";
+import { CHECK_TYPE_LABEL, LINE_STATUSES, LINE_STATUS_LABEL, audienceOf, can } from "../lib/catalog";
 import { formatDate, formatDateTime, todayISO } from "../lib/dates";
 import { downloadText } from "../lib/download";
 import { navigate } from "../lib/router";
@@ -49,13 +49,19 @@ export function CheckPage({ id }: { id: string }) {
   if (!check) return <div className="page muted">Loading…</div>;
 
   const cart = data.carts.find((c) => c.id === check.cart_id);
-  const editable = check.status === "draft" && can.runChecks(data.role);
+  const p = data.perm;
+  const editable = check.status === "draft" && can.runChecks(p, check.cart_id) && audienceOf(p.role) === check.audience;
+  const isAudit = check.audience === "pharmacy";
+  const reviewer = can.review(p, check.audience);
+  const obsEditable = isAudit && check.status === "submitted" && can.closeObservations(p, check.cart_id);
+  const awaitingManager = isAudit ? check.status === "in_review" : check.status === "submitted";
+  const managerName = isAudit ? "the pharmacy manager" : "the nursing manager";
   const stats = api.checkStats(lines);
   const shown = issuesOnly ? lines.filter((l) => l.line_status !== "present") : lines;
   const floors = [...new Set(shown.map((l) => `${l.drawer_order}|${l.drawer_name}`))].sort(
     (a, b) => Number(a.split("|")[0]) - Number(b.split("|")[0]),
   );
-  const canDelete = (check.status === "draft" && check.performed_by === ws.user.id) || data.role === "hospital_admin";
+  const canDelete = (check.status === "draft" && check.performed_by === ws.user.id) || p.isSuper;
 
   async function patchLine(line: CheckLine, patch: Partial<CheckLine>) {
     setLines((ls) => ls.map((l) => (l.id === line.id ? { ...l, ...patch } : l)));
@@ -93,12 +99,18 @@ export function CheckPage({ id }: { id: string }) {
         <div>
           <h1>{cart?.name ?? "Cart check"}</h1>
           <p>
-            {CHECK_TYPE_LABEL[check.check_type]} · {check.performed_by_name} · {formatDateTime(check.created_at)}
+            {isAudit ? "Pharmacy audit" : "Nursing check"} · {CHECK_TYPE_LABEL[check.check_type]} · {check.performed_by_name} ·{" "}
+            {formatDateTime(check.created_at)}
           </p>
           <div className="row wrap" style={{ gap: 6, marginTop: 8 }}>
             <StatusBadge status={check.status} />
             <span className="badge ok">{stats.ok} OK</span>
             {stats.issues > 0 && <span className="badge danger">{stats.issues} issues</span>}
+            {isAudit && check.status !== "draft" && stats.issues > 0 && (
+              <span className={`badge ${stats.obsOpen ? "warn" : "ok"}`}>
+                {stats.obsOpen ? `${stats.obsOpen} observation${stats.obsOpen > 1 ? "s" : ""} open` : "Observations closed"}
+              </span>
+            )}
           </div>
         </div>
         <div className="row wrap no-print">
@@ -143,7 +155,21 @@ export function CheckPage({ id }: { id: string }) {
             </div>
             <div className="card">
               {mine.map((l) => (
-                <LineRow key={l.id} line={l} editable={editable} windowDays={data.hospital.near_expiry_days} onChange={(p) => void patchLine(l, p)} />
+                <LineRow
+                  key={l.id}
+                  line={l}
+                  editable={editable}
+                  obsEditable={obsEditable}
+                  showObs={isAudit && check.status !== "draft"}
+                  windowDays={data.hospital.near_expiry_days}
+                  onChange={(patch) => void patchLine(l, patch)}
+                  onObservation={(action) =>
+                    act(
+                      () => (action === null ? api.reopenObservation(backend, l.id) : api.closeObservation(backend, l.id, action)),
+                      action === null ? "Observation reopened" : "Observation closed",
+                    )
+                  }
+                />
               ))}
             </div>
           </div>
@@ -173,9 +199,10 @@ export function CheckPage({ id }: { id: string }) {
                 className="btn primary"
                 disabled={busy}
                 onClick={async () => {
-                  if (stats.issues > 0 && !confirm(`Submit with ${stats.issues} issue(s)? A reviewer will be asked to follow up.`)) return;
-                  if (await act(() => api.submitCheck(backend, check, { seal_number: seal, remarks }), "Check submitted")) {
-                    if (cart && seal.trim() && seal.trim() !== cart.seal_number && can.manageCarts(data.role))
+                  const next = isAudit ? "You'll close each observation, then send it to the pharmacy manager." : "Your nursing manager will follow up.";
+                  if (stats.issues > 0 && !confirm(`Submit with ${stats.issues} issue(s)? ${next}`)) return;
+                  if (await act(() => api.submitCheck(backend, check, { seal_number: seal, remarks }), isAudit ? "Audit submitted" : "Sent to your nursing manager")) {
+                    if (cart && seal.trim() && seal.trim() !== cart.seal_number && can.setItems(p, cart.id))
                       await api.updateCart(backend, cart.id, { seal_number: seal.trim() }).then(reload);
                   }
                 }}
@@ -209,29 +236,44 @@ export function CheckPage({ id }: { id: string }) {
               )}
             </div>
 
-            {check.status === "submitted" && can.review(data.role) && (
+            {obsEditable && (
               <div className="no-print" style={{ marginTop: 14 }}>
-                <Field label="Review notes" hint="What was done about the issues (restocked, replaced, escalated…)">
+                <p className="small" style={{ marginTop: 0 }}>
+                  Close each observation above with what was done, then send the audit to the pharmacy manager.
+                </p>
+                <button
+                  className="btn primary"
+                  disabled={busy || stats.obsOpen > 0}
+                  onClick={() => void act(() => api.sendForReview(backend, check), "Sent to the pharmacy manager")}
+                >
+                  Send to pharmacy manager{stats.obsOpen ? ` (${stats.obsOpen} open)` : ""}
+                </button>
+              </div>
+            )}
+            {awaitingManager && reviewer && (
+              <div className="no-print" style={{ marginTop: 14 }}>
+                <Field label="Review notes" hint={isAudit ? "Your check of the pharmacist's follow-up" : "What was done about the issues (restocked, replaced, escalated…)"}>
                   <textarea className="input" value={review} onChange={(e) => setReview(e.target.value)} />
                 </Field>
                 <div className="row wrap">
-                  <button className="btn" disabled={busy} onClick={() => void act(() => api.reopenCheck(backend, check), "Check reopened")}>
-                    Send back
+                  <button className="btn" disabled={busy} onClick={() => void act(() => api.sendBack(backend, check, review), "Sent back")}>
+                    {isAudit ? "Send back to pharmacist" : "Send back to nurse"}
                   </button>
                   <div className="spacer" />
-                  <button className="btn primary" disabled={busy} onClick={() => void act(() => api.closeCheck(backend, check, ws.user, review), "Check closed")}>
+                  <button className="btn primary" disabled={busy} onClick={() => void act(() => api.closeCheck(backend, check, ws.user, review), "Closed")}>
                     Review and close
                   </button>
                 </div>
               </div>
             )}
-            {check.status === "closed" && can.review(data.role) && (
-              <button className="btn small no-print" style={{ marginTop: 12 }} disabled={busy} onClick={() => void act(() => api.reopenCheck(backend, check), "Check reopened")}>
+            {check.status === "closed" && reviewer && (
+              <button className="btn small no-print" style={{ marginTop: 12 }} disabled={busy} onClick={() => void act(() => api.sendBack(backend, check), "Reopened")}>
                 Reopen
               </button>
             )}
-            {check.status === "submitted" && !can.review(data.role) && (
-              <p className="muted small">Waiting for an admin, quality or manager to review.</p>
+            {awaitingManager && !reviewer && <p className="muted small">Waiting for {managerName} to review.</p>}
+            {isAudit && check.status === "submitted" && !obsEditable && (
+              <p className="muted small">Waiting for the pharmacist to close the observations.</p>
             )}
           </div>
         )}
@@ -257,15 +299,23 @@ export function CheckPage({ id }: { id: string }) {
 function LineRow({
   line,
   editable,
+  obsEditable,
+  showObs,
   windowDays,
   onChange,
+  onObservation,
 }: {
   line: CheckLine;
   editable: boolean;
+  obsEditable: boolean;
+  showObs: boolean;
   windowDays: number;
   onChange: (p: Partial<CheckLine>) => void;
+  /** Close with an action, or reopen with null. */
+  onObservation: (action: string | null) => Promise<boolean>;
 }) {
   const [remarks, setRemarks] = useState(line.remarks);
+  const [action, setAction] = useState(line.obs_action);
   const [found, setFound] = useState(line.found_qty === null ? "" : String(line.found_qty));
   const issue = line.line_status !== "present";
 
@@ -334,6 +384,36 @@ function LineRow({
         </>
       ) : (
         line.remarks && <div className="small muted">{line.remarks}</div>
+      )}
+      {showObs && issue && (
+        <div className="small" style={{ marginTop: 8 }}>
+          {line.obs_closed ? (
+            <div className="row wrap" style={{ gap: 6 }}>
+              <span className="badge ok">Observation closed</span>
+              <span>{line.obs_action}</span>
+              {obsEditable && (
+                <button className="btn ghost small no-print" onClick={() => void onObservation(null)}>
+                  Reopen
+                </button>
+              )}
+            </div>
+          ) : obsEditable ? (
+            <div className="line-extra no-print">
+              <input
+                className="input"
+                placeholder="Action taken (restocked, replaced, escalated…)"
+                aria-label={`Action taken for ${line.item_name}`}
+                value={action}
+                onChange={(e) => setAction(e.target.value)}
+              />
+              <button className="btn small primary" onClick={() => void onObservation(action)}>
+                Close observation
+              </button>
+            </div>
+          ) : (
+            <span className="badge warn">Observation open</span>
+          )}
+        </div>
       )}
     </div>
   );

@@ -4,11 +4,13 @@ import * as api from "../lib/api";
 import { KIND_LABEL, can } from "../lib/catalog";
 import { formatDate, formatDateTime } from "../lib/dates";
 import { navigate } from "../lib/router";
-import type { Drawer, ItemKind } from "../lib/types";
+import type { Drawer } from "../lib/types";
 import { Icon } from "../components/icons";
 import { StartCheckSheet } from "../components/StartCheck";
 import { BackLink, Empty, ExpiryBadge, Field, Sheet, StatusBadge, TypeLabel } from "../components/ui";
 import { CartFormSheet } from "./Carts";
+import { EMPTY_ITEM, ItemFields } from "./Items";
+import { downloadText } from "../lib/download";
 
 export function CartPage({ id }: { id: string }) {
   const { backend, data, run } = useApp();
@@ -22,7 +24,7 @@ export function CartPage({ id }: { id: string }) {
   if (!cart)
     return (
       <div className="page">
-        <BackLink href="#/carts">Carts</BackLink>
+        <BackLink href="#/carts">Wards</BackLink>
         <div className="card">
           <Empty>This cart no longer exists.</Empty>
         </div>
@@ -33,8 +35,8 @@ export function CartPage({ id }: { id: string }) {
   const drawers = data.drawers.filter((d) => d.cart_id === id).sort((a, b) => a.sort_order - b.sort_order);
   const checks = data.checks.filter((c) => c.cart_id === id);
   const summary = api.cartSummaries(data).find((s) => s.cart.id === id)!;
-  const restock = can.restock(data.role);
-  const manage = can.manageCarts(data.role);
+  const restock = can.restock(data.perm, id);
+  const manage = can.setItems(data.perm, id);
 
   async function remove() {
     if (!confirm(`Delete ${cart!.name}? Its contents and check history will be removed.`)) return;
@@ -43,7 +45,7 @@ export function CartPage({ id }: { id: string }) {
 
   return (
     <div className="page">
-      <BackLink href="#/carts">Carts</BackLink>
+      <BackLink href="#/carts">Wards</BackLink>
       <div className="page-head">
         <div>
           <h1>{cart.name}</h1>
@@ -52,18 +54,29 @@ export function CartPage({ id }: { id: string }) {
             {cart.seal_number ? ` · Seal ${cart.seal_number}` : ""}
           </p>
           <div className="row wrap" style={{ gap: 6, marginTop: 8 }}>
-            {summary.dailyDue ? <span className="badge warn">Check due</span> : <span className="badge ok">Checked in last 24 h</span>}
+            <PharmacyCheckBadge summary={summary} />
             {summary.expired > 0 && <span className="badge danger">{summary.expired} expired</span>}
             {summary.soon > 0 && <span className="badge warn">{summary.soon} expiring soon</span>}
           </div>
         </div>
         <div className="row wrap">
+          <button
+            className="btn small"
+            onClick={() => downloadText(`${data.hospital.code}-${cart.location.replace(/\W+/g, "-")}-crash-cart-items.csv`, api.wardItemsCsv(data, id))}
+          >
+            <Icon.download /> Item list CSV
+          </button>
           {manage && (
             <button className="btn small" onClick={() => setEditing(true)}>
               Edit
             </button>
           )}
-          {can.runChecks(data.role) && (
+          {can.reports(data.perm) && (
+            <a className="btn small" href={`#/reports?ward=${id}`}>
+              <Icon.chart /> Reports
+            </a>
+          )}
+          {can.runChecks(data.perm, id) && (
             <button className="btn primary" onClick={() => setStarting(true)}>
               {summary.openCheck ? "Continue check" : "Start check"}
             </button>
@@ -83,7 +96,7 @@ export function CartPage({ id }: { id: string }) {
                     Rename
                   </button>
                 )}
-                {restock && (
+                {manage && (
                   <button className="btn small" onClick={() => setAdding(d)}>
                     <Icon.plus /> Item
                   </button>
@@ -97,10 +110,11 @@ export function CartPage({ id }: { id: string }) {
                   <>
                     <div className="list-main">
                       <div className="t">
+                        {r.item.code && <span className="muted small">{r.item.code} · </span>}
                         {r.item.name} {r.item.strength && <span className="muted small">{r.item.strength}</span>}
                       </div>
                       <div className="s">
-                        Par {r.cartItem.par_qty} · {KIND_LABEL[r.item.kind]}
+                        Qty {r.cartItem.par_qty} · {r.item.generic || KIND_LABEL[r.item.kind]}
                         {r.cartItem.lot_number ? ` · Lot ${r.cartItem.lot_number}` : ""}
                         {r.cartItem.expiry_date ? ` · Exp ${formatDate(r.cartItem.expiry_date)}` : ""}
                       </div>
@@ -156,10 +170,10 @@ export function CartPage({ id }: { id: string }) {
         </div>
       </div>
 
-      {manage && (
+      {can.manageWards(data.perm) && (
         <div className="section">
           <button className="btn danger small" onClick={() => void remove()}>
-            Delete this cart
+            Delete this ward
           </button>
         </div>
       )}
@@ -183,7 +197,7 @@ function AddItemSheet({ cartId, drawer, onClose }: { cartId: string; drawer: Dra
   const { backend, data, run } = useApp();
   const active = data.items.filter((i) => i.is_active);
   const [itemId, setItemId] = useState(active[0]?.id ?? "__new");
-  const [newItem, setNewItem] = useState({ name: "", kind: "medicine" as ItemKind, strength: "", category: "" });
+  const [newItem, setNewItem] = useState<api.ItemInput>(EMPTY_ITEM);
   const [qty, setQty] = useState(1);
   const [lot, setLot] = useState("");
   const [expiry, setExpiry] = useState("");
@@ -216,6 +230,7 @@ function AddItemSheet({ cartId, drawer, onClose }: { cartId: string; drawer: Dra
           <select className="input" value={itemId} onChange={(e) => setItemId(e.target.value)}>
             {active.map((i) => (
               <option key={i.id} value={i.id}>
+                {i.code ? `${i.code} · ` : ""}
                 {i.name}
                 {i.strength ? ` (${i.strength})` : ""}
               </option>
@@ -225,21 +240,7 @@ function AddItemSheet({ cartId, drawer, onClose }: { cartId: string; drawer: Dra
         </Field>
         {itemId === "__new" && (
           <div className="card card-pad" style={{ marginBottom: 12, background: "var(--surface-2)" }}>
-            <Field label="Item name">
-              <input className="input" value={newItem.name} onChange={(e) => setNewItem({ ...newItem, name: e.target.value })} required />
-            </Field>
-            <div className="grid cols-2">
-              <Field label="Type">
-                <select className="input" value={newItem.kind} onChange={(e) => setNewItem({ ...newItem, kind: e.target.value as ItemKind })}>
-                  <option value="medicine">Medicine</option>
-                  <option value="surgical">Surgical</option>
-                  <option value="misc">Other</option>
-                </select>
-              </Field>
-              <Field label="Strength / size">
-                <input className="input" value={newItem.strength} onChange={(e) => setNewItem({ ...newItem, strength: e.target.value })} />
-              </Field>
-            </div>
+            <ItemFields v={newItem} set={setNewItem} />
           </div>
         )}
         <div className="grid cols-2">
@@ -262,7 +263,9 @@ function AddItemSheet({ cartId, drawer, onClose }: { cartId: string; drawer: Dra
 }
 
 function EditStockSheet({ row, drawers, onClose }: { row: api.StockRow; drawers: Drawer[]; onClose: () => void }) {
-  const { backend, run } = useApp();
+  const { backend, run, data } = useApp();
+  // Pharmacists restock (lot, expiry); the ward's Hospital admin sets the items themselves.
+  const full = can.setItems(data.perm, row.cart.id);
   const [qty, setQty] = useState(row.cartItem.par_qty);
   const [lot, setLot] = useState(row.cartItem.lot_number);
   const [expiry, setExpiry] = useState(row.cartItem.expiry_date ?? "");
@@ -273,7 +276,12 @@ function EditStockSheet({ row, drawers, onClose }: { row: api.StockRow; drawers:
     e.preventDefault();
     setBusy(true);
     const ok = await run(
-      () => api.updateCartItem(backend, row.cartItem.id, { par_qty: qty, lot_number: lot, expiry_date: expiry || null, drawer_id: drawerId }),
+      () =>
+        api.updateCartItem(
+          backend,
+          row.cartItem.id,
+          full ? { par_qty: qty, lot_number: lot, expiry_date: expiry || null, drawer_id: drawerId } : { lot_number: lot, expiry_date: expiry || null },
+        ),
       "Saved",
     );
     setBusy(false);
@@ -293,7 +301,7 @@ function EditStockSheet({ row, drawers, onClose }: { row: api.StockRow; drawers:
         </p>
         <div className="grid cols-2">
           <Field label="Par quantity">
-            <input className="input" type="number" min={1} inputMode="numeric" value={qty} onChange={(e) => setQty(Number(e.target.value))} />
+            <input className="input" type="number" min={1} inputMode="numeric" value={qty} disabled={!full} onChange={(e) => setQty(Number(e.target.value))} />
           </Field>
           <Field label="Expiry date">
             <input className="input" type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} />
@@ -303,7 +311,7 @@ function EditStockSheet({ row, drawers, onClose }: { row: api.StockRow; drawers:
           <input className="input" value={lot} onChange={(e) => setLot(e.target.value)} />
         </Field>
         <Field label="Floor">
-          <select className="input" value={drawerId} onChange={(e) => setDrawerId(e.target.value)}>
+          <select className="input" value={drawerId} disabled={!full} onChange={(e) => setDrawerId(e.target.value)}>
             {drawers.map((d) => (
               <option key={d.id} value={d.id}>
                 {d.name}
@@ -312,9 +320,11 @@ function EditStockSheet({ row, drawers, onClose }: { row: api.StockRow; drawers:
           </select>
         </Field>
         <div className="row">
-          <button type="button" className="btn danger" onClick={() => void remove()}>
-            Remove
-          </button>
+          {full && (
+            <button type="button" className="btn danger" onClick={() => void remove()}>
+              Remove
+            </button>
+          )}
           <div className="spacer" />
           <button className="btn primary" disabled={busy}>
             {busy ? "Saving…" : "Save"}
@@ -342,5 +352,19 @@ function RenameFloorSheet({ drawer, onClose }: { drawer: Drawer; onClose: () => 
         <button className="btn primary block">Save</button>
       </form>
     </Sheet>
+  );
+}
+
+/** When the pharmacy last checked this ward, or that a check is due this month. */
+export function PharmacyCheckBadge({ summary }: { summary: api.CartSummary }) {
+  const last = summary.lastCheck;
+  const when = last ? formatDate((last.submitted_at ?? last.created_at).slice(0, 10)) : "";
+  return summary.dailyDue ? (
+    <span className="badge warn">{last ? `Pharmacy check due · last ${when}` : "Pharmacy check due"}</span>
+  ) : (
+    <span className="badge ok">
+      Checked by pharmacy {when}
+      {last?.performed_by_name ? ` · ${last.performed_by_name}` : ""}
+    </span>
   );
 }

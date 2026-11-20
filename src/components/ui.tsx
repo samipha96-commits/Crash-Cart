@@ -49,7 +49,8 @@ export function ExpiryBadge({ date, windowDays }: { date: string | null; windowD
 export function StatusBadge({ status }: { status: CheckStatus }) {
   const map: Record<CheckStatus, [string, string]> = {
     draft: ["In progress", "info"],
-    submitted: ["Awaiting review", "warn"],
+    submitted: ["Submitted", "warn"],
+    in_review: ["With pharmacy manager", "warn"],
     closed: ["Closed", "ok"],
   };
   const [label, cls] = map[status];

@@ -15,6 +15,8 @@ import { ExpiryPage } from "./pages/Expiry";
 import { ItemsPage } from "./pages/Items";
 import { TeamPage } from "./pages/Team";
 import { MorePage } from "./pages/More";
+import { ReportsPage } from "./pages/Reports";
+import { applyTheme } from "./lib/theme";
 
 const HOSPITAL_KEY = "crash-cart-hospital";
 
@@ -82,21 +84,32 @@ export default function App() {
 
   const ws = phase.kind === "ready" ? phase.ws : null;
   const hospital = ws ? (ws.hospitals.find((h) => h.id === hospitalId) ?? ws.hospitals[0] ?? null) : null;
-  const role = ws && hospital ? api.roleFor(ws, hospital.id) : null;
+  const perm = ws && hospital ? api.permFor(ws, hospital.id) : null;
+  const permKey = perm ? `${perm.isSuper}|${perm.role}|${perm.wardIds.join(",")}` : "";
+
+  // Each hospital portal has its own colours, corners and headings.
+  useEffect(() => {
+    applyTheme(hospital);
+    const mq = window.matchMedia?.("(prefers-color-scheme: dark)");
+    const on = () => applyTheme(hospital);
+    mq?.addEventListener?.("change", on);
+    return () => mq?.removeEventListener?.("change", on);
+  }, [hospital]);
 
   const currentHospital = useRef<string | null>(null);
   currentHospital.current = hospital?.id ?? null;
 
   const reload = useCallback(async () => {
-    if (!hospital || !role) return;
+    if (!hospital || !perm) return;
     try {
-      const next = await api.loadHospital(backend, hospital, role);
+      const next = await api.loadHospital(backend, hospital, perm);
       // Ignore a slow load for a hospital the user has already switched away from.
       if (currentHospital.current === next.hospital.id) setData(next);
     } catch (e) {
       showToast((e as Error).message, "error");
     }
-  }, [hospital, role, showToast]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hospital, permKey, showToast]);
 
   useEffect(() => {
     setData((d) => (d && hospital && d.hospital.id === hospital.id ? d : null));
@@ -191,6 +204,7 @@ function Routes() {
   if (match("/expiry", path)) return <ExpiryPage />;
   if (match("/items", path)) return <ItemsPage />;
   if (match("/team", path)) return <TeamPage />;
+  if (match("/reports", path)) return <ReportsPage />;
   if (match("/more", path)) return <MorePage />;
   return <HomePage />;
 }
