@@ -1,4 +1,4 @@
-import type { Role, TableName, Tables, User } from "../types";
+import type { Audience, Membership, Role, TableName, Tables, User } from "../types";
 import { PermissionError, type Backend, type Filter, type SelectOptions } from "./types";
 
 /**
@@ -12,7 +12,7 @@ interface DemoUser extends User {
 }
 
 interface DemoDb {
-  version: 1;
+  version: 2;
   users: DemoUser[];
   /** Emails of Super admins (the platform owner). */
   superEmails: string[];
@@ -25,31 +25,19 @@ export interface KeyValueStore {
   setItem(key: string, value: string): void;
 }
 
-export const DEMO_KEY = "crash-cart-demo-v1";
-
-const ALL: Role[] = ["hospital_admin", "pharmacy", "nurse", "quality", "manager"];
-const WRITE_RULES: Record<TableName, Role[] | null> = {
-  hospitals: ["hospital_admin"],
-  memberships: [],
-  invites: [],
-  items: ["hospital_admin", "pharmacy"],
-  carts: ["hospital_admin"],
-  drawers: ["hospital_admin"],
-  cart_items: ["hospital_admin", "pharmacy"],
-  checks: ["hospital_admin", "pharmacy", "nurse", "quality", "manager"],
-  check_lines: ["hospital_admin", "pharmacy", "nurse", "quality"],
-};
+export const DEMO_KEY = "crash-cart-demo-v2";
 
 const DEFAULTS: { [K in TableName]: () => Partial<Tables[K]> } = {
-  hospitals: () => ({ near_expiry_days: 30, created_at: new Date().toISOString() }),
-  memberships: () => ({ name: "", created_at: new Date().toISOString() }),
-  invites: () => ({ created_at: new Date().toISOString() }),
+  hospitals: () => ({ near_expiry_days: 30, theme: {}, logo_url: "", created_at: new Date().toISOString() }),
+  memberships: () => ({ name: "", ward_ids: [], created_at: new Date().toISOString() }),
+  invites: () => ({ ward_ids: [], created_at: new Date().toISOString() }),
   items: () => ({ category: "General", strength: "", is_active: true, created_at: new Date().toISOString() }),
   carts: () => ({ cart_type: "Ward", seal_number: "", created_at: new Date().toISOString() }),
   drawers: () => ({}),
   cart_items: () => ({ par_qty: 1, lot_number: "", expiry_date: null, updated_at: new Date().toISOString() }),
   checks: () => ({
     status: "draft",
+    audience: "nursing",
     performed_by_name: "",
     seal_number: "",
     remarks: "",
@@ -59,12 +47,27 @@ const DEFAULTS: { [K in TableName]: () => Partial<Tables[K]> } = {
     submitted_at: null,
     closed_at: null,
   }),
-  check_lines: () => ({ strength: "", drawer_order: 0, found_qty: null, expiry_date: null, line_status: "present", remarks: "" }),
+  check_lines: () => ({
+    strength: "",
+    drawer_order: 0,
+    found_qty: null,
+    expiry_date: null,
+    line_status: "present",
+    remarks: "",
+    obs_action: "",
+    obs_closed: false,
+  }),
 };
+
+const ADMIN_GRANTABLE: Role[] = ["nurse", "pharmacy"];
+const DEPT: Record<Audience, Role[]> = { nursing: ["nurse", "nursing_manager"], pharmacy: ["pharmacy", "pharmacy_manager"] };
+const CHECKER: Record<Audience, Role> = { nursing: "nurse", pharmacy: "pharmacy" };
+const REVIEWER: Record<Audience, Role> = { nursing: "nursing_manager", pharmacy: "pharmacy_manager" };
+const OBS_FIELDS = ["obs_action", "obs_closed"];
 
 function emptyDb(): DemoDb {
   return {
-    version: 1,
+    version: 2,
     users: [],
     superEmails: [],
     sessionUserId: null,
@@ -103,7 +106,7 @@ export function createLocalBackend(store?: KeyValueStore): Backend & { reset(): 
       const raw = kv.getItem(DEMO_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as DemoDb;
-        if (parsed.version === 1 && Array.isArray(parsed.superEmails)) return parsed;
+        if (parsed.version === 2 && Array.isArray(parsed.superEmails)) return parsed;
       }
     } catch {
       /* corrupted or blocked storage: start fresh */
@@ -132,40 +135,154 @@ export function createLocalBackend(store?: KeyValueStore): Backend & { reset(): 
     return !!u && db.superEmails.includes(u.email);
   }
 
-  /** The caller's role in a hospital. The Super admin counts as admin everywhere. */
-  function roleIn(hospitalId: string | undefined): Role | null {
+  function mem(hospitalId: string | undefined): Membership | null {
     const u = db.users.find((x) => x.id === db.sessionUserId);
     if (!u || !hospitalId) return null;
-    if (isSuper()) return db.tables.hospitals.some((h) => h.id === hospitalId) ? "hospital_admin" : null;
-    return db.tables.memberships.find((m) => m.hospital_id === hospitalId && m.user_id === u.id)?.role ?? null;
+    return db.tables.memberships.find((m) => m.hospital_id === hospitalId && m.user_id === u.id) ?? null;
   }
 
-  function hospitalOf(table: TableName, row: Record<string, unknown>): string | undefined {
-    return (table === "hospitals" ? row.id : row.hospital_id) as string | undefined;
+  function hospitalExists(id: string | undefined) {
+    return !!id && db.tables.hospitals.some((h) => h.id === id);
   }
 
-  function assertWrite(table: TableName, row: Record<string, unknown>) {
-    if (table === "memberships" || table === "invites") {
-      if (!isSuper()) throw new PermissionError("Only the Super admin can give or change staff rights.");
-      return;
+  /** Mirrors ward_ok() in SQL: the caller covers this cart (empty ward list = all). */
+  function wardOk(hid: string, cartId: string, roles?: Role[]): boolean {
+    if (isSuper()) return hospitalExists(hid);
+    const m = mem(hid);
+    if (!m || (roles && !roles.includes(m.role))) return false;
+    return m.ward_ids.length === 0 || m.ward_ids.includes(cartId);
+  }
+
+  function checkOf(id: unknown) {
+    return db.tables.checks.find((x) => x.id === id);
+  }
+
+  /** Mirrors can_see_check(): nursing checks stay in nursing, audits in pharmacy. */
+  function seesCheck(c: Tables["checks"] | undefined): boolean {
+    if (!c) return false;
+    return wardOk(c.hospital_id, c.cart_id, DEPT[c.audience]);
+  }
+
+  function canRead(table: TableName, r: Record<string, unknown>): boolean {
+    const hid = (table === "hospitals" ? r.id : r.hospital_id) as string;
+    if (isSuper()) return hospitalExists(hid);
+    const m = mem(hid);
+    if (!m) return false;
+    switch (table) {
+      case "invites":
+        return m.role === "hospital_admin";
+      case "carts":
+        return wardOk(hid, r.id as string);
+      case "drawers":
+      case "cart_items":
+        return wardOk(hid, r.cart_id as string);
+      case "checks":
+        return seesCheck(r as unknown as Tables["checks"]);
+      case "check_lines":
+        return seesCheck(checkOf(r.check_id));
+      default:
+        return true;
     }
-    const role = roleIn(hospitalOf(table, row));
-    const allowed = WRITE_RULES[table] ?? ALL;
-    if (!role || !allowed.includes(role)) throw new PermissionError("Your role cannot do that.");
+  }
+
+  /** A Hospital admin may give nurse / pharmacist rights inside their own wards. */
+  function adminCanGrant(hid: string, role: Role, wardIds: string[]): boolean {
+    const m = mem(hid);
+    if (!m || m.role !== "hospital_admin" || !ADMIN_GRANTABLE.includes(role)) return false;
+    if (m.ward_ids.length === 0) return true;
+    return wardIds.length > 0 && wardIds.every((w) => m.ward_ids.includes(w));
+  }
+
+  function assertGrant(hid: string, role: Role, wardIds: string[]) {
+    if (role === "nurse" && wardIds.length !== 1) throw new Error("A nurse is given exactly one ward.");
+    if (isSuper()) return;
+    if (!adminCanGrant(hid, role, wardIds))
+      throw new PermissionError("Only the Super admin can give this role, or a Hospital admin for nurses and pharmacists of their own wards.");
+  }
+
+  function assertWrite(table: TableName, r: Record<string, unknown>, before?: Record<string, unknown>) {
+    const hid = (table === "hospitals" ? r.id : r.hospital_id) as string;
+    const deny = (msg = "Your role cannot do that.") => {
+      throw new PermissionError(msg);
+    };
+    switch (table) {
+      case "hospitals":
+        if (!isSuper()) deny("Only the Super admin can change the hospital portal.");
+        return;
+      case "memberships":
+      case "invites":
+        if (before) assertGrant(hid, before.role as Role, before.ward_ids as string[]);
+        assertGrant(hid, r.role as Role, r.ward_ids as string[]);
+        return;
+      case "items":
+        if (!(isSuper() || ["hospital_admin", "pharmacy"].includes(mem(hid)?.role ?? ""))) deny();
+        return;
+      case "carts":
+        // Wards are created and removed by the Super admin; admins of the ward may rename / reseal.
+        if (!isSuper() && !(before && wardOk(hid, r.id as string, ["hospital_admin"]))) deny("Only the Super admin can add or remove wards.");
+        return;
+      case "drawers":
+        if (!wardOk(hid, r.cart_id as string, ["hospital_admin"])) deny("Only the Hospital admin of this ward can set its crash cart.");
+        return;
+      case "cart_items":
+        if (!wardOk(hid, r.cart_id as string, ["hospital_admin", "pharmacy"])) deny("Only the Hospital admin or pharmacist of this ward can change its items.");
+        return;
+      case "checks": {
+        const c = r as unknown as Tables["checks"];
+        if (!before) {
+          if (isSuper() || !wardOk(hid, c.cart_id, [CHECKER[c.audience]]))
+            deny(c.audience === "nursing" ? "Only a nurse of this ward can assess its cart." : "Only a pharmacist of this ward can audit its cart.");
+        } else if (!seesCheck(before as unknown as Tables["checks"])) deny();
+        return;
+      }
+      case "check_lines": {
+        const c = checkOf(r.check_id);
+        if (!c || !seesCheck(c)) deny();
+        return;
+      }
+    }
   }
 
   function guardCheckChange(before: Tables["checks"], after: Tables["checks"]) {
-    const role = roleIn(before.hospital_id);
-    const reviewer = role === "hospital_admin" || role === "quality" || role === "manager";
-    if (after.status === "closed" && before.status !== "closed" && !reviewer)
-      throw new PermissionError("Only an admin, quality or manager can close a check.");
-    if (after.status === "draft" && before.status !== "draft" && !reviewer)
-      throw new PermissionError("Only an admin, quality or manager can reopen a check.");
+    const role = isSuper() ? null : mem(before.hospital_id)?.role ?? null;
+    const reviewer = isSuper() || role === REVIEWER[before.audience];
+    const checker = role === CHECKER[before.audience];
+    if (after.audience !== before.audience || after.cart_id !== before.cart_id) throw new PermissionError("A check cannot be moved.");
+    if (before.status === after.status) {
+      if (before.status === "draft" && !checker) throw new PermissionError("Only the checker can change a check in progress.");
+      if (before.status !== "draft" && !reviewer && !checker) throw new PermissionError("Your role cannot do that.");
+      return;
+    }
+    const step = `${before.status}>${after.status}`;
+    if (step === "draft>submitted") {
+      if (!checker) throw new PermissionError("Only the checker can submit.");
+    } else if (step === "submitted>in_review") {
+      if (before.audience !== "pharmacy" || role !== "pharmacy") throw new PermissionError("Only a pharmacist can send an audit for review.");
+      const open = db.tables.check_lines.filter((l) => l.check_id === before.id && l.line_status !== "present" && !l.obs_closed);
+      if (open.length) throw new PermissionError(`Close all observations first (${open.length} still open).`);
+    } else if (step === "in_review>closed" || (step === "submitted>closed" && before.audience === "nursing")) {
+      if (!reviewer)
+        throw new PermissionError(before.audience === "nursing" ? "Only the nursing manager can close a nurse's check." : "Only the pharmacy manager can close an audit.");
+    } else if (step === "submitted>closed") {
+      throw new PermissionError("The pharmacist closes the observations and sends the audit for review first.");
+    } else if (after.status === "draft" || step === "in_review>submitted" || step === "closed>submitted") {
+      if (!reviewer) throw new PermissionError("Only the manager can send a check back.");
+    } else {
+      throw new PermissionError("That status change isn't allowed.");
+    }
   }
 
-  function guardLine(line: Tables["check_lines"]) {
-    const c = db.tables.checks.find((x) => x.id === line.check_id);
-    if (c && c.status !== "draft") throw new PermissionError("This check is already submitted.");
+  function guardLine(line: Tables["check_lines"], patch?: Record<string, unknown>) {
+    const c = checkOf(line.check_id);
+    if (!c) throw new PermissionError("Check not found.");
+    const role = isSuper() ? null : mem(c.hospital_id)?.role ?? null;
+    if (c.status === "draft") {
+      if (role !== CHECKER[c.audience]) throw new PermissionError("Only the checker can fill in a check.");
+      return;
+    }
+    const obsOnly = patch && Object.keys(patch).every((k) => OBS_FIELDS.includes(k));
+    if (obsOnly && c.status === "submitted" && c.audience === "pharmacy" && role === "pharmacy") return;
+    throw new PermissionError("This check is already submitted.");
   }
 
   function cascade(table: TableName, ids: string[]) {
@@ -252,11 +369,8 @@ export function createLocalBackend(store?: KeyValueStore): Backend & { reset(): 
 
     async select<T extends TableName>(table: T, filter?: Filter, opts?: SelectOptions) {
       me();
-      let rows = (db.tables[table] as unknown as Record<string, unknown>[]).filter(
-        (r) => roleIn(hospitalOf(table, r)) !== null,
-      );
+      let rows = (db.tables[table] as unknown as Record<string, unknown>[]).filter((r) => canRead(table, r));
       rows = rows.filter((r) => matches(r, filter));
-      if (table === "invites" && !isSuper()) rows = [];
       if (opts?.order) {
         const { column, ascending = true } = opts.order;
         rows = [...rows].sort((a, b) => {
@@ -276,6 +390,11 @@ export function createLocalBackend(store?: KeyValueStore): Backend & { reset(): 
         unknown
       >[];
       for (const r of full) {
+        if (table === "check_lines") {
+          const c = checkOf(r.check_id);
+          if (!c || c.status !== "draft" || isSuper() || mem(c.hospital_id)?.role !== CHECKER[c.audience])
+            throw new PermissionError("Only the checker can fill in a check.");
+        }
         assertWrite(table, r);
         if (table === "checks" && r.performed_by !== user.id)
           throw new PermissionError("A check must be started by the signed-in user.");
@@ -289,11 +408,11 @@ export function createLocalBackend(store?: KeyValueStore): Backend & { reset(): 
       const rows = db.tables[table] as unknown as Record<string, unknown>[];
       for (let i = 0; i < rows.length; i++) {
         const r = rows[i];
-        if (!matches(r, filter) || roleIn(hospitalOf(table, r)) === null) continue;
-        assertWrite(table, r);
+        if (!matches(r, filter) || !canRead(table, r)) continue;
         const next = { ...r, ...patch };
+        assertWrite(table, next, r);
         if (table === "checks") guardCheckChange(r as never, next as never);
-        if (table === "check_lines") guardLine(r as never);
+        if (table === "check_lines") guardLine(r as never, patch as Record<string, unknown>);
         rows[i] = next;
       }
       save();
@@ -304,13 +423,14 @@ export function createLocalBackend(store?: KeyValueStore): Backend & { reset(): 
       const rows = db.tables[table] as unknown as Record<string, unknown>[];
       const doomed: string[] = [];
       for (const r of rows) {
-        if (!matches(r, filter) || roleIn(hospitalOf(table, r)) === null) continue;
+        if (!matches(r, filter) || !canRead(table, r)) continue;
         if (table === "checks") {
           const own = r.status === "draft" && r.performed_by === user.id;
-          if (!own && roleIn(r.hospital_id as string) !== "hospital_admin")
-            throw new PermissionError("Only an admin can delete a submitted check.");
+          if (!own && !isSuper()) throw new PermissionError("Only the person who started a check can delete it, while it is in progress.");
+        } else if (table === "carts") {
+          if (!isSuper()) throw new PermissionError("Only the Super admin can remove wards.");
         } else {
-          assertWrite(table, r);
+          assertWrite(table, r, r);
           if (table === "check_lines") guardLine(r as never);
         }
         doomed.push(r.id as string);
@@ -333,6 +453,8 @@ export function createLocalBackend(store?: KeyValueStore): Backend & { reset(): 
         name: name.trim(),
         code: code.trim().toUpperCase(),
         near_expiry_days: 30,
+        theme: {},
+        logo_url: "",
         created_by: user.id,
         created_at: new Date().toISOString(),
       });
@@ -344,8 +466,10 @@ export function createLocalBackend(store?: KeyValueStore): Backend & { reset(): 
       const mine = db.tables.invites.filter((i) => i.email === user.email);
       for (const inv of mine) {
         const existing = db.tables.memberships.find((m) => m.hospital_id === inv.hospital_id && m.user_id === user.id);
-        if (existing) existing.role = inv.role;
-        else
+        if (existing) {
+          existing.role = inv.role;
+          existing.ward_ids = inv.ward_ids;
+        } else
           db.tables.memberships.push({
             id: crypto.randomUUID(),
             hospital_id: inv.hospital_id,
@@ -353,6 +477,7 @@ export function createLocalBackend(store?: KeyValueStore): Backend & { reset(): 
             email: user.email,
             name: user.name,
             role: inv.role,
+            ward_ids: inv.ward_ids,
             created_at: new Date().toISOString(),
           });
       }

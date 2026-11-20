@@ -1,4 +1,4 @@
-import type { CheckType, ItemKind, LineStatus, Role } from "./types";
+import type { Audience, CheckType, ItemKind, LineStatus, Role } from "./types";
 
 export interface StarterItem {
   name: string;
@@ -50,23 +50,31 @@ export const STARTER_CARTS = [
 
 export const CART_TYPES = ["ICU", "Emergency", "Ward", "Paediatric", "Neonatal", "Operating theatre", "Other"];
 
-export const ROLES: Role[] = ["hospital_admin", "pharmacy", "nurse", "quality", "manager"];
+export const ROLES: Role[] = ["hospital_admin", "nurse", "nursing_manager", "pharmacy", "pharmacy_manager"];
+
+/** Roles a Hospital admin may create. Everything else is given by the Super admin. */
+export const ADMIN_GRANTABLE: Role[] = ["nurse", "pharmacy"];
 
 export const ROLE_LABEL: Record<Role, string> = {
   hospital_admin: "Hospital admin",
-  pharmacy: "Pharmacy",
   nurse: "Nurse",
-  quality: "Quality",
-  manager: "Manager",
+  nursing_manager: "Nursing manager",
+  pharmacy: "Pharmacist",
+  pharmacy_manager: "Pharmacy manager",
 };
 
 export const ROLE_HELP: Record<Role, string> = {
-  hospital_admin: "Carts, item list, checks and review for their hospital",
-  pharmacy: "Restocks carts (quantity, lot, expiry) and runs checks",
-  nurse: "Runs crash cart checks",
-  quality: "Runs checks, reviews and closes them",
-  manager: "Views everything, reviews and closes checks",
+  hospital_admin: "Sets the crash cart items of their wards and creates nurse and pharmacist IDs",
+  nurse: "Assesses the crash cart of one ward; the report goes to the nursing manager only",
+  nursing_manager: "Reviews and closes nurses' checks for every ward",
+  pharmacy: "Monthly audits of their wards, closes observations, ward reports",
+  pharmacy_manager: "Reviews pharmacists' audits and sees the reports of every ward",
 };
+
+/** Roles that hold exactly one ward. */
+export const SINGLE_WARD: Role[] = ["nurse"];
+/** Roles that always cover every ward. */
+export const ALL_WARDS: Role[] = ["nursing_manager", "pharmacy_manager"];
 
 export const CHECK_TYPE_LABEL: Record<CheckType, string> = {
   daily: "Daily seal check",
@@ -88,11 +96,46 @@ export const LINE_STATUSES: LineStatus[] = ["present", "short", "absent", "expir
 
 export const KIND_LABEL: Record<string, string> = { medicine: "Medicine", surgical: "Surgical", misc: "Other" };
 
+/** The signed-in person's rights in the current hospital. */
+export interface Perm {
+  role: Role | null;
+  isSuper: boolean;
+  /** Carts (wards) they cover; empty means all. */
+  wardIds: string[];
+}
+
+export function coversWard(p: Perm, cartId: string): boolean {
+  return p.isSuper || p.wardIds.length === 0 || p.wardIds.includes(cartId);
+}
+
 /** Who can do what. Mirrors the row-level security in supabase/migrations. */
 export const can = {
-  manageHospital: (r: Role | null) => r === "hospital_admin",
-  manageCarts: (r: Role | null) => r === "hospital_admin",
-  restock: (r: Role | null) => r === "hospital_admin" || r === "pharmacy",
-  runChecks: (r: Role | null) => r === "hospital_admin" || r === "pharmacy" || r === "nurse" || r === "quality",
-  review: (r: Role | null) => r === "hospital_admin" || r === "quality" || r === "manager",
+  /** Portal look, wards, hospital settings. */
+  manageHospital: (p: Perm) => p.isSuper,
+  /** Add or delete wards (carts). */
+  manageWards: (p: Perm) => p.isSuper,
+  /** Rename a cart, edit its floors and items. */
+  setItems: (p: Perm, cartId?: string) =>
+    p.isSuper || (p.role === "hospital_admin" && (!cartId || coversWard(p, cartId))),
+  /** Update lot and expiry when stock is replaced. */
+  restock: (p: Perm, cartId?: string) =>
+    can.setItems(p, cartId) || (p.role === "pharmacy" && (!cartId || coversWard(p, cartId))),
+  /** Start a check: nurses assess their ward, pharmacists audit theirs. */
+  runChecks: (p: Perm, cartId?: string) =>
+    !p.isSuper && (p.role === "nurse" || p.role === "pharmacy") && (!cartId || coversWard(p, cartId)),
+  /** Close a check of this audience. */
+  review: (p: Perm, audience: Audience) =>
+    p.isSuper || (audience === "nursing" ? p.role === "nursing_manager" : p.role === "pharmacy_manager"),
+  /** Close observations of a pharmacy audit and send it to the Pharmacy manager. */
+  closeObservations: (p: Perm, cartId: string) => !p.isSuper && p.role === "pharmacy" && coversWard(p, cartId),
+  /** Reports tab. */
+  reports: (p: Perm) => p.isSuper || p.role === "pharmacy" || p.role === "pharmacy_manager",
+  /** Give people IDs and rights. */
+  manageStaff: (p: Perm) => p.isSuper || p.role === "hospital_admin",
+  grantableRoles: (p: Perm): Role[] => (p.isSuper ? ROLES : p.role === "hospital_admin" ? ADMIN_GRANTABLE : []),
 };
+
+/** Which department a role's checks belong to. */
+export function audienceOf(role: Role | null): Audience {
+  return role === "pharmacy" || role === "pharmacy_manager" ? "pharmacy" : "nursing";
+}

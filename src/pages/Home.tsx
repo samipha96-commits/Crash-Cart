@@ -35,7 +35,7 @@ export function HomePage() {
             {data.hospital.name} · {data.carts.length} cart{data.carts.length === 1 ? "" : "s"}
           </p>
         </div>
-        {can.runChecks(data.role) && data.carts.length > 0 && (
+        {can.runChecks(data.perm) && data.carts.length > 0 && (
           <button className="btn primary" onClick={() => setStarting(true)}>
             <Icon.plus /> Start a check
           </button>

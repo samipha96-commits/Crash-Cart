@@ -16,19 +16,22 @@ export function CartsPage() {
     <div className="page">
       <div className="page-head">
         <div>
-          <h1>Crash carts</h1>
-          <p>Every cart in {data.hospital.name}, with its last check and expiry status.</p>
+          <h1>Wards</h1>
+          <p>
+            {data.perm.isSuper || data.perm.wardIds.length === 0 ? "Every ward's crash cart" : "The crash carts of your wards"} at {data.hospital.name}, with the last
+            check and expiry status.
+          </p>
         </div>
-        {can.manageCarts(data.role) && (
+        {can.manageWards(data.perm) && (
           <button className="btn primary" onClick={() => setAdding(true)}>
-            <Icon.plus /> Add cart
+            <Icon.plus /> Add ward
           </button>
         )}
       </div>
 
       {summaries.length === 0 && (
         <div className="card">
-          <Empty>No carts yet.{can.manageCarts(data.role) ? " Add your first cart." : " Ask your hospital admin to add carts."}</Empty>
+          <Empty>No wards yet.{can.manageWards(data.perm) ? " Add the first ward and its crash cart." : " Ask the Super admin to add wards or give you access to one."}</Empty>
         </div>
       )}
 
@@ -92,13 +95,13 @@ export function CartFormSheet({
   }
 
   return (
-    <Sheet title={initial ? "Edit cart" : "Add a crash cart"} onClose={onClose}>
+    <Sheet title={initial ? "Edit ward cart" : "Add a ward and its crash cart"} onClose={onClose}>
       <form onSubmit={submit}>
         <Field label="Cart name">
           <input className="input" value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} placeholder="e.g. ICU Crash Cart 2" required />
         </Field>
-        <Field label="Location">
-          <input className="input" value={v.location} onChange={(e) => setV({ ...v, location: e.target.value })} placeholder="e.g. ICU, bed 12" required />
+        <Field label="Ward" hint="Used for ward rights and as the ward's name in reports.">
+          <input className="input" value={v.location} onChange={(e) => setV({ ...v, location: e.target.value })} placeholder="e.g. ICU, Emergency, General ward" required />
         </Field>
         <Field label="Type">
           <select className="input" value={v.cart_type} onChange={(e) => setV({ ...v, cart_type: e.target.value })}>

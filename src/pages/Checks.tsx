@@ -10,12 +10,14 @@ import { Empty, StatusBadge } from "../components/ui";
 const FILTERS: { key: CheckStatus | "all"; label: string }[] = [
   { key: "all", label: "All" },
   { key: "draft", label: "In progress" },
-  { key: "submitted", label: "Awaiting review" },
+  { key: "submitted", label: "Submitted" },
+  { key: "in_review", label: "With manager" },
   { key: "closed", label: "Closed" },
 ];
 
 export function ChecksPage() {
   const { data } = useApp();
+  const pharmacy = data.perm.role === "pharmacy" || data.perm.role === "pharmacy_manager";
   const [filter, setFilter] = useState<CheckStatus | "all">("all");
   const [cartFilter, setCartFilter] = useState("");
   const [starting, setStarting] = useState(false);
@@ -28,12 +30,18 @@ export function ChecksPage() {
     <div className="page">
       <div className="page-head">
         <div>
-          <h1>Checks</h1>
-          <p>Daily seal checks, monthly and quarterly audits, and restocks after a code.</p>
+          <h1>{pharmacy ? "Pharmacy audits" : "Checks"}</h1>
+          <p>
+            {pharmacy
+              ? "Pharmacists' audits of the crash carts. Pharmacists close each observation, then the pharmacy manager reviews."
+              : data.perm.isSuper
+                ? "Nurses' checks (seen by nursing only) and pharmacists' audits."
+                : "Nurses' crash cart checks. They stay inside nursing: only nurses of the ward and the nursing manager see them."}
+          </p>
         </div>
-        {can.runChecks(data.role) && data.carts.length > 0 && (
+        {can.runChecks(data.perm) && data.carts.length > 0 && (
           <button className="btn primary" onClick={() => setStarting(true)}>
-            <Icon.plus /> Start a check
+            <Icon.plus /> {data.perm.role === "pharmacy" ? "Start an audit" : "Start a check"}
           </button>
         )}
       </div>
@@ -47,7 +55,7 @@ export function ChecksPage() {
           ))}
         </div>
         <select className="select-hospital" value={cartFilter} onChange={(e) => setCartFilter(e.target.value)} aria-label="Filter by cart">
-          <option value="">All carts</option>
+          <option value="">All wards</option>
           {data.carts.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}

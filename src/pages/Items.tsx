@@ -10,7 +10,7 @@ export function ItemsPage() {
   const { data, backend, run } = useApp();
   const [adding, setAdding] = useState(false);
   const [q, setQ] = useState("");
-  const edit = can.restock(data.role);
+  const edit = can.setItems(data.perm) || data.perm.role === "pharmacy";
   const usage = new Map<string, number>();
   for (const ci of data.cartItems) usage.set(ci.item_id, (usage.get(ci.item_id) ?? 0) + 1);
   const items = data.items.filter((i) => !q || i.name.toLowerCase().includes(q.toLowerCase()) || i.category.toLowerCase().includes(q.toLowerCase()));

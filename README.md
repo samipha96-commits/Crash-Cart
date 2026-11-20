@@ -8,26 +8,38 @@ pharmacist covering two sites) and switch between them.
 
 ## What it does
 
-- **Carts with floors.** Each cart has floors (drawers) holding items with a par quantity, lot number
-  and expiry date. New hospitals can start with three standard adult carts (ICU, Emergency, Ward).
-- **Checks.** Daily seal checks, monthly full checks, quarterly audits and after-code restocks. Staff go
-  floor by floor and mark each item OK, short, missing, expired, expiring or damaged. Items whose
-  recorded expiry has passed are flagged automatically. A check moves from *in progress* to
-  *awaiting review* to *closed*, with remarks and seal numbers kept on the record.
-- **Expiry tracker.** Every item in every cart, soonest expiry first, with a per-hospital warning
-  window (30 days by default). Pharmacy updates the date and lot when they replace stock.
-- **Dashboard.** Carts due a daily check, checks waiting for review, expired and expiring items.
-- **Reports.** CSV export and print view for any check and for the expiry list.
-- **Roles.** A single **Super admin** (the platform owner) is the only one who can create hospitals
-  and give anyone access or change their role. Inside each hospital:
+- **Hospital portals.** The **Super admin** creates each hospital's portal with its own theme, brand
+  colour, corner style, spacing, heading style and logo, and its wards (one crash cart per ward).
+- **Wards and crash carts.** Each ward's cart has floors (drawers) holding items with an approved
+  quantity, lot number and expiry date. The ward's Hospital admin sets the items.
+- **Nurse checks (internal to nursing).** A nurse assesses the cart of their one ward, item by item
+  (OK, short, missing, expired, expiring, damaged). The check goes to the nursing manager only;
+  pharmacy and admins don't see it.
+- **Pharmacist audits.** Pharmacists audit their wards' carts monthly with the same checklist,
+  close every observation with the action taken, then send the audit to the Pharmacy manager, who
+  reviews and closes it (or sends it back).
+- **Reports tab.** Per ward or all wards, in the hospital's *CRASH AUDIT* workbook format:
+  - *One month*: percentage summary per ward (approved, available, % availability, near expiry,
+    expired, below and above standard, % variation, remarks) and each ward's item sheet
+    (ITEMS / QTY / QTY PRESENT / EXPIRY / REMARKS by drawer).
+  - *Several months*: the same, with a monthly summary per ward and one *Remarks* column for each
+    selected month.
+  - Every report has an overall performance gauge and a comparison with the previous month (or
+    across the selected months), and exports to Excel (.xlsx) or prints to PDF.
+- **Expiry tracker.** Every item in your wards, soonest expiry first.
 
-  | Role | Can do |
-  | --- | --- |
-  | Hospital admin | Carts, item list, checks, review, hospital settings (not staff rights) |
-  | Pharmacy | Restock carts (quantities, lots, expiry dates), maintain the item list, run checks |
-  | Nurse | Run checks |
-  | Quality | Run checks, review and close them |
-  | Manager | View everything, review and close checks |
+### Who can do what
+
+| ID | Wards | Can do |
+| --- | --- | --- |
+| Super admin | all hospitals | Create hospital portals (look, logo), wards, and any ID, including several Hospital admins per hospital |
+| Hospital admin | some or all wards (set by Super admin) | Set crash cart items of their wards; create nurse and pharmacist IDs inside their wards |
+| Nurse | exactly one ward | Assess their ward's cart; report goes to the nursing manager |
+| Nursing manager | all wards | Review and close nurses' checks |
+| Pharmacist | some or all wards | Monthly audits, close observations, restock lot/expiry, reports of their wards |
+| Pharmacy manager (was Quality) | all wards | Review and close audits, reports of every ward |
+
+The rules are enforced in the database (row-level security), not only in the app.
 
 ## Run it
 
@@ -38,15 +50,18 @@ npm test           # logic tests
 npm run build      # production build in dist/
 ```
 
-With no configuration the app runs in **Demo mode**: a Super admin, two sample hospitals and four
-sample staff accounts, stored in the browser only. Use it to try the app; nothing is shared between devices.
+With no configuration the app runs in **Demo mode**: a Super admin, two themed sample hospitals,
+one sample account for every role (password `demo1234`) and four months of pharmacist audits so the
+Reports tab has history to compare, stored in the browser only. Use it to try the app; nothing is shared between devices.
 
 ## Connect a real database (shared between devices and hospitals)
 
 The app uses [Supabase](https://supabase.com) (hosted Postgres with sign-in) for real use.
 
 1. Create a Supabase project.
-2. In the SQL editor, run [`supabase/migrations/0001_crash_cart.sql`](supabase/migrations/0001_crash_cart.sql).
+2. In the SQL editor, run [`supabase/migrations/0001_crash_cart.sql`](supabase/migrations/0001_crash_cart.sql), then
+   [`0002_roles_wards_reports.sql`](supabase/migrations/0002_roles_wards_reports.sql) (existing *Quality* users become
+   *Pharmacy manager*, *Manager* becomes *Nursing manager*; existing staff keep access to all wards).
    It creates the tables and the row-level security rules that keep each hospital's data private
    and enforce the roles above in the database itself, not just in the app.
 3. Copy `.env.example` to `.env.local` and fill in the project URL and anon (publishable) key from

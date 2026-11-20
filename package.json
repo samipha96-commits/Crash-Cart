@@ -12,10 +12,11 @@
     "cap:sync": "npm run build && npx cap sync"
   },
   "dependencies": {
+    "@capacitor/core": "^7.4.0",
     "@supabase/supabase-js": "^2.81.0",
+    "exceljs": "^4.4.0",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "@capacitor/core": "^7.4.0"
+    "react-dom": "^19.2.0"
   },
   "devDependencies": {
     "@capacitor/cli": "^7.4.0",

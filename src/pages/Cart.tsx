@@ -22,7 +22,7 @@ export function CartPage({ id }: { id: string }) {
   if (!cart)
     return (
       <div className="page">
-        <BackLink href="#/carts">Carts</BackLink>
+        <BackLink href="#/carts">Wards</BackLink>
         <div className="card">
           <Empty>This cart no longer exists.</Empty>
         </div>
@@ -33,8 +33,8 @@ export function CartPage({ id }: { id: string }) {
   const drawers = data.drawers.filter((d) => d.cart_id === id).sort((a, b) => a.sort_order - b.sort_order);
   const checks = data.checks.filter((c) => c.cart_id === id);
   const summary = api.cartSummaries(data).find((s) => s.cart.id === id)!;
-  const restock = can.restock(data.role);
-  const manage = can.manageCarts(data.role);
+  const restock = can.restock(data.perm, id);
+  const manage = can.setItems(data.perm, id);
 
   async function remove() {
     if (!confirm(`Delete ${cart!.name}? Its contents and check history will be removed.`)) return;
@@ -43,7 +43,7 @@ export function CartPage({ id }: { id: string }) {
 
   return (
     <div className="page">
-      <BackLink href="#/carts">Carts</BackLink>
+      <BackLink href="#/carts">Wards</BackLink>
       <div className="page-head">
         <div>
           <h1>{cart.name}</h1>
@@ -52,7 +52,7 @@ export function CartPage({ id }: { id: string }) {
             {cart.seal_number ? ` · Seal ${cart.seal_number}` : ""}
           </p>
           <div className="row wrap" style={{ gap: 6, marginTop: 8 }}>
-            {summary.dailyDue ? <span className="badge warn">Check due</span> : <span className="badge ok">Checked in last 24 h</span>}
+            {summary.dailyDue ? <span className="badge warn">Check due</span> : <span className="badge ok">Up to date</span>}
             {summary.expired > 0 && <span className="badge danger">{summary.expired} expired</span>}
             {summary.soon > 0 && <span className="badge warn">{summary.soon} expiring soon</span>}
           </div>
@@ -63,7 +63,12 @@ export function CartPage({ id }: { id: string }) {
               Edit
             </button>
           )}
-          {can.runChecks(data.role) && (
+          {can.reports(data.perm) && (
+            <a className="btn small" href={`#/reports?ward=${id}`}>
+              <Icon.chart /> Reports
+            </a>
+          )}
+          {can.runChecks(data.perm, id) && (
             <button className="btn primary" onClick={() => setStarting(true)}>
               {summary.openCheck ? "Continue check" : "Start check"}
             </button>
@@ -83,7 +88,7 @@ export function CartPage({ id }: { id: string }) {
                     Rename
                   </button>
                 )}
-                {restock && (
+                {manage && (
                   <button className="btn small" onClick={() => setAdding(d)}>
                     <Icon.plus /> Item
                   </button>
@@ -156,10 +161,10 @@ export function CartPage({ id }: { id: string }) {
         </div>
       </div>
 
-      {manage && (
+      {can.manageWards(data.perm) && (
         <div className="section">
           <button className="btn danger small" onClick={() => void remove()}>
-            Delete this cart
+            Delete this ward
           </button>
         </div>
       )}
@@ -262,7 +267,9 @@ function AddItemSheet({ cartId, drawer, onClose }: { cartId: string; drawer: Dra
 }
 
 function EditStockSheet({ row, drawers, onClose }: { row: api.StockRow; drawers: Drawer[]; onClose: () => void }) {
-  const { backend, run } = useApp();
+  const { backend, run, data } = useApp();
+  // Pharmacists restock (lot, expiry); the ward's Hospital admin sets the items themselves.
+  const full = can.setItems(data.perm, row.cart.id);
   const [qty, setQty] = useState(row.cartItem.par_qty);
   const [lot, setLot] = useState(row.cartItem.lot_number);
   const [expiry, setExpiry] = useState(row.cartItem.expiry_date ?? "");
@@ -273,7 +280,12 @@ function EditStockSheet({ row, drawers, onClose }: { row: api.StockRow; drawers:
     e.preventDefault();
     setBusy(true);
     const ok = await run(
-      () => api.updateCartItem(backend, row.cartItem.id, { par_qty: qty, lot_number: lot, expiry_date: expiry || null, drawer_id: drawerId }),
+      () =>
+        api.updateCartItem(
+          backend,
+          row.cartItem.id,
+          full ? { par_qty: qty, lot_number: lot, expiry_date: expiry || null, drawer_id: drawerId } : { lot_number: lot, expiry_date: expiry || null },
+        ),
       "Saved",
     );
     setBusy(false);
@@ -293,7 +305,7 @@ function EditStockSheet({ row, drawers, onClose }: { row: api.StockRow; drawers:
         </p>
         <div className="grid cols-2">
           <Field label="Par quantity">
-            <input className="input" type="number" min={1} inputMode="numeric" value={qty} onChange={(e) => setQty(Number(e.target.value))} />
+            <input className="input" type="number" min={1} inputMode="numeric" value={qty} disabled={!full} onChange={(e) => setQty(Number(e.target.value))} />
           </Field>
           <Field label="Expiry date">
             <input className="input" type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} />
@@ -303,7 +315,7 @@ function EditStockSheet({ row, drawers, onClose }: { row: api.StockRow; drawers:
           <input className="input" value={lot} onChange={(e) => setLot(e.target.value)} />
         </Field>
         <Field label="Floor">
-          <select className="input" value={drawerId} onChange={(e) => setDrawerId(e.target.value)}>
+          <select className="input" value={drawerId} disabled={!full} onChange={(e) => setDrawerId(e.target.value)}>
             {drawers.map((d) => (
               <option key={d.id} value={d.id}>
                 {d.name}
@@ -312,9 +324,11 @@ function EditStockSheet({ row, drawers, onClose }: { row: api.StockRow; drawers:
           </select>
         </Field>
         <div className="row">
-          <button type="button" className="btn danger" onClick={() => void remove()}>
-            Remove
-          </button>
+          {full && (
+            <button type="button" className="btn danger" onClick={() => void remove()}>
+              Remove
+            </button>
+          )}
           <div className="spacer" />
           <button className="btn primary" disabled={busy}>
             {busy ? "Saving…" : "Save"}

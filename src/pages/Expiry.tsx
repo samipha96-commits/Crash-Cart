@@ -93,7 +93,7 @@ export function ExpiryPage() {
               <ExpiryBadge date={r.cartItem.expiry_date} windowDays={data.hospital.near_expiry_days} />
             </>
           );
-          return can.restock(data.role) ? (
+          return can.restock(data.perm, r.cart.id) ? (
             <button key={r.cartItem.id} className="list-item" onClick={() => setEditing(r)}>
               {body}
             </button>

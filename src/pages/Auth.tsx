@@ -62,7 +62,7 @@ export function AuthScreen() {
               <button className="list-item" disabled={busy} onClick={() => void demo(DEMO_SUPER.email)}>
                 <div className="list-main">
                   <div className="t">{DEMO_SUPER.name}</div>
-                  <div className="s">Creates hospitals and gives every person their rights</div>
+                  <div className="s">Creates hospital portals (theme, logo, wards) and Hospital admin IDs</div>
                 </div>
               </button>
               {DEMO_USERS.map((u) => (
@@ -70,6 +70,7 @@ export function AuthScreen() {
                   <div className="list-main">
                     <div className="t">
                       {u.name} · {ROLE_LABEL[u.role]}
+                      {u.wards !== "all" ? ` · ${u.wards.join(", ")}` : ""}
                     </div>
                     <div className="s">{ROLE_HELP[u.role]}</div>
                   </div>

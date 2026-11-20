@@ -1,5 +1,5 @@
 import type { Backend } from "./backend/types";
-import { DRAWER_NAMES, STARTER_CARTS, STARTER_ITEMS } from "./catalog";
+import { ALL_WARDS, DRAWER_NAMES, SINGLE_WARD, STARTER_CARTS, STARTER_ITEMS, audienceOf, can, type Perm } from "./catalog";
 import { addDays, expiryState, hoursSince, todayISO, type ExpiryState } from "./dates";
 import type {
   Cart,
@@ -9,6 +9,7 @@ import type {
   CheckType,
   Drawer,
   Hospital,
+  HospitalTheme,
   Invite,
   Item,
   ItemKind,
@@ -46,15 +47,16 @@ export async function loadWorkspace(b: Backend): Promise<Workspace | null> {
   return { user, isSuper, memberships, hospitals };
 }
 
-/** The caller's working role in a hospital (the Super admin acts as its admin). */
-export function roleFor(ws: Workspace, hospitalId: string): Role | null {
-  if (ws.isSuper) return "hospital_admin";
-  return ws.memberships.find((m) => m.hospital_id === hospitalId)?.role ?? null;
+/** The caller's rights in a hospital. The Super admin has no role but full access. */
+export function permFor(ws: Workspace, hospitalId: string): Perm | null {
+  if (ws.isSuper) return { role: null, isSuper: true, wardIds: [] };
+  const m = ws.memberships.find((x) => x.hospital_id === hospitalId);
+  return m ? { role: m.role, isSuper: false, wardIds: m.ward_ids ?? [] } : null;
 }
 
 export interface HospitalData {
   hospital: Hospital;
-  role: Role;
+  perm: Perm;
   members: Membership[];
   invites: Invite[];
   items: Item[];
@@ -66,11 +68,11 @@ export interface HospitalData {
   openLines: CheckLine[];
 }
 
-export async function loadHospital(b: Backend, hospital: Hospital, role: Role): Promise<HospitalData> {
+export async function loadHospital(b: Backend, hospital: Hospital, perm: Perm): Promise<HospitalData> {
   const hid = hospital.id;
   const [members, invites, items, carts, drawers, cartItems, checks] = await Promise.all([
     b.select("memberships", { hospital_id: hid }, { order: { column: "email" } }),
-    (await b.isSuperAdmin()) ? b.select("invites", { hospital_id: hid }) : Promise.resolve([] as Invite[]),
+    can.manageStaff(perm) ? b.select("invites", { hospital_id: hid }) : Promise.resolve([] as Invite[]),
     b.select("items", { hospital_id: hid }, { order: { column: "name" } }),
     b.select("carts", { hospital_id: hid }, { order: { column: "name" } }),
     b.select("drawers", { hospital_id: hid }, { order: { column: "sort_order" } }),
@@ -79,7 +81,7 @@ export async function loadHospital(b: Backend, hospital: Hospital, role: Role): 
   ]);
   const openIds = checks.filter((c) => c.status !== "closed").map((c) => c.id);
   const openLines = openIds.length ? await b.select("check_lines", { check_id: openIds }) : [];
-  return { hospital, role, members, invites, items, carts, drawers, cartItems, checks, openLines };
+  return { hospital, perm, members, invites, items, carts, drawers, cartItems, checks, openLines };
 }
 
 export async function loadCheck(b: Backend, checkId: string) {
@@ -131,7 +133,7 @@ export interface CartSummary {
   lastCheck: Check | null;
   openCheck: Check | null;
   openIssues: number;
-  /** No completed check in the last 24 hours. */
+  /** Nursing: no completed check in the last 24 hours. Pharmacy: no audit this month. */
   dailyDue: boolean;
 }
 
@@ -152,7 +154,11 @@ export function cartSummaries(d: HospitalData, today = todayISO(), nowMs = Date.
       lastCheck: done,
       openCheck,
       openIssues: d.openLines.filter((l) => openCheckIds.has(l.check_id) && l.line_status !== "present").length,
-      dailyDue: !done || hoursSince(done.submitted_at ?? done.created_at, nowMs) >= 24,
+      // Nurses check daily; pharmacists audit each ward once a month.
+      dailyDue:
+        audienceOf(d.perm.role) === "pharmacy" && !d.perm.isSuper
+          ? !done || (done.submitted_at ?? done.created_at).slice(0, 7) !== new Date(nowMs).toISOString().slice(0, 7)
+          : !done || hoursSince(done.submitted_at ?? done.created_at, nowMs) >= 24,
     };
   });
 }
@@ -165,14 +171,15 @@ export function defaultLineStatus(expiry: string | null, windowDays: number, tod
 
 export function checkStats(lines: CheckLine[]) {
   const issues = lines.filter((l) => l.line_status !== "present");
-  return { total: lines.length, ok: lines.length - issues.length, issues: issues.length };
+  const obsOpen = issues.filter((l) => !l.obs_closed).length;
+  return { total: lines.length, ok: lines.length - issues.length, issues: issues.length, obsOpen };
 }
 
 // ------------------------------------------------------------------ hospitals
 
 export async function createHospital(
   b: Backend,
-  input: { name: string; code: string; starterCarts: boolean },
+  input: { name: string; code: string; starterCarts: boolean; theme?: HospitalTheme; logo_url?: string },
   expiryFor?: (index: number) => string | null,
 ): Promise<string> {
   const name = input.name.trim();
@@ -180,6 +187,7 @@ export async function createHospital(
   if (name.length < 2 || code.length < 2) throw new Error("Enter the hospital name and a short code.");
   const hid = uuid();
   await b.createHospital(hid, name, code);
+  if (input.theme || input.logo_url) await b.update("hospitals", { id: hid }, { theme: input.theme ?? {}, logo_url: input.logo_url ?? "" });
 
   const items: Item[] = STARTER_ITEMS.map((s) => ({
     id: uuid(),
@@ -213,7 +221,11 @@ export async function createHospital(
   return hid;
 }
 
-export async function updateHospital(b: Backend, hid: string, patch: { name?: string; code?: string; near_expiry_days?: number }) {
+export async function updateHospital(
+  b: Backend,
+  hid: string,
+  patch: { name?: string; code?: string; near_expiry_days?: number; theme?: HospitalTheme; logo_url?: string },
+) {
   await b.update("hospitals", { id: hid }, patch);
 }
 
@@ -343,6 +355,7 @@ export async function startCheck(
 ): Promise<string> {
   const cart = d.carts.find((c) => c.id === cartId);
   if (!cart) throw new Error("Cart not found.");
+  if (!can.runChecks(d.perm, cartId)) throw new Error("Only a nurse or pharmacist of this ward can check its cart.");
   const checkId = uuid();
   await b.insert("checks", [
     {
@@ -350,6 +363,7 @@ export async function startCheck(
       hospital_id: d.hospital.id,
       cart_id: cartId,
       check_type: type,
+      audience: audienceOf(d.perm.role),
       status: "draft",
       performed_by: user.id,
       performed_by_name: user.name || user.email,
@@ -389,26 +403,44 @@ export async function markAllPresent(b: Backend, lines: CheckLine[]) {
   if (ids.length) await b.update("check_lines", { id: ids }, { line_status: "present" });
 }
 
-export async function submitCheck(b: Backend, check: Check, input: { seal_number: string; remarks: string }) {
+export async function submitCheck(b: Backend, check: Check, input: { seal_number: string; remarks: string }, at = now()) {
   await b.update("checks", { id: check.id }, {
     status: "submitted",
     seal_number: input.seal_number.trim(),
     remarks: input.remarks.trim(),
-    submitted_at: now(),
+    submitted_at: at,
   });
 }
 
-export async function closeCheck(b: Backend, check: Check, reviewer: User, notes: string) {
+/** Pharmacist records what was done about an observation and closes it (audit submitted). */
+export async function closeObservation(b: Backend, lineId: string, action: string) {
+  if (!action.trim()) throw new Error("Write what was done before closing the observation.");
+  await b.update("check_lines", { id: lineId }, { obs_action: action.trim(), obs_closed: true });
+}
+
+export async function reopenObservation(b: Backend, lineId: string) {
+  await b.update("check_lines", { id: lineId }, { obs_closed: false });
+}
+
+/** Pharmacist: all observations closed, hand the audit to the Pharmacy manager. */
+export async function sendForReview(b: Backend, check: Check) {
+  await b.update("checks", { id: check.id }, { status: "in_review" });
+}
+
+/** Manager closes the check (nursing: from submitted; pharmacy: from in review). */
+export async function closeCheck(b: Backend, check: Check, reviewer: User, notes: string, at = now()) {
   await b.update("checks", { id: check.id }, {
     status: "closed",
     review_notes: notes.trim(),
     reviewed_by_name: reviewer.name || reviewer.email,
-    closed_at: now(),
+    closed_at: at,
   });
 }
 
-export async function reopenCheck(b: Backend, check: Check) {
-  await b.update("checks", { id: check.id }, { status: "draft", closed_at: null });
+/** Manager sends a check back: audits go back to the pharmacist, nurses' checks back to the nurse. */
+export async function sendBack(b: Backend, check: Check, notes = "") {
+  const status = check.audience === "pharmacy" && check.status !== "submitted" ? "submitted" : "draft";
+  await b.update("checks", { id: check.id }, { status, closed_at: null, review_notes: notes.trim() });
 }
 
 export async function deleteCheck(b: Backend, check: Check) {
@@ -417,16 +449,27 @@ export async function deleteCheck(b: Backend, check: Check) {
 
 // ------------------------------------------------------------------ team
 
-export async function inviteMember(b: Backend, d: HospitalData, email: string, role: Role) {
+/** Normalises the wards that go with a role: one for nurses, all for managers. */
+export function wardsForRole(role: Role, wardIds: string[]): string[] {
+  if (ALL_WARDS.includes(role)) return [];
+  const unique = [...new Set(wardIds)];
+  if (SINGLE_WARD.includes(role) && unique.length !== 1) throw new Error("Choose the one ward this nurse works on.");
+  return unique;
+}
+
+/** Creates an ID: the person joins with this role and these wards when they sign in with the email. */
+export async function inviteMember(b: Backend, d: HospitalData, email: string, role: Role, wardIds: string[] = []) {
   const clean = email.trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean)) throw new Error("Enter a valid email address.");
+  if (!can.grantableRoles(d.perm).includes(role)) throw new Error("You can't give that role.");
+  const ward_ids = wardsForRole(role, wardIds);
   const existing = d.members.find((m) => m.email === clean);
   if (existing) {
-    await b.update("memberships", { id: existing.id }, { role });
+    await b.update("memberships", { id: existing.id }, { role, ward_ids });
     return { joined: true };
   }
   await b.remove("invites", { hospital_id: d.hospital.id, email: clean });
-  await b.insert("invites", [{ id: uuid(), hospital_id: d.hospital.id, email: clean, role }]);
+  await b.insert("invites", [{ id: uuid(), hospital_id: d.hospital.id, email: clean, role, ward_ids }]);
   return { joined: false };
 }
 
@@ -434,8 +477,8 @@ export async function cancelInvite(b: Backend, id: string) {
   await b.remove("invites", { id });
 }
 
-export async function changeRole(b: Backend, membershipId: string, role: Role) {
-  await b.update("memberships", { id: membershipId }, { role });
+export async function changeAccess(b: Backend, membershipId: string, role: Role, wardIds: string[]) {
+  await b.update("memberships", { id: membershipId }, { role, ward_ids: wardsForRole(role, wardIds) });
 }
 
 export async function removeMember(b: Backend, membershipId: string) {
@@ -459,48 +502,141 @@ export function toCsv(header: string[], rows: unknown[][]): string {
 
 export const DEMO_PASSWORD = "demo1234";
 export const DEMO_SUPER = { email: "superadmin@demo.hospital", name: "Super Admin" };
-export const DEMO_USERS: { email: string; name: string; role: Role }[] = [
-  { email: "admin@demo.hospital", name: "Aisha Rahman", role: "hospital_admin" },
-  { email: "nurse@demo.hospital", name: "Omar Khalid", role: "nurse" },
-  { email: "pharmacy@demo.hospital", name: "Lina Haddad", role: "pharmacy" },
-  { email: "quality@demo.hospital", name: "Yusuf Ali", role: "quality" },
+
+/** Wards are matched by cart type in the demo: "all" means every ward. */
+export const DEMO_USERS: { email: string; name: string; role: Role; wards: "all" | string[] }[] = [
+  { email: "admin@demo.hospital", name: "Aisha Rahman", role: "hospital_admin", wards: "all" },
+  { email: "admin.icu@demo.hospital", name: "Bilal Saeed", role: "hospital_admin", wards: ["ICU", "Emergency"] },
+  { email: "nurse@demo.hospital", name: "Omar Khalid", role: "nurse", wards: ["ICU"] },
+  { email: "nursing.manager@demo.hospital", name: "Mariam Saleh", role: "nursing_manager", wards: "all" },
+  { email: "pharmacist@demo.hospital", name: "Lina Haddad", role: "pharmacy", wards: "all" },
+  { email: "pharmacist.er@demo.hospital", name: "Hamza Noor", role: "pharmacy", wards: ["Emergency", "Ward"] },
+  { email: "pharmacy.manager@demo.hospital", name: "Yusuf Ali", role: "pharmacy_manager", wards: "all" },
 ];
 
-/** Builds two demo hospitals with carts, staff and a few checks. */
+/** First day of the month `offset` months from `today`'s month, as YYYY-MM-DD. */
+function monthStart(today: string, offset: number): string {
+  const [y, m] = today.split("-").map(Number);
+  const d = new Date(Date.UTC(y, m - 1 + offset, 1));
+  return d.toISOString().slice(0, 10);
+}
+
+/** Builds two demo hospitals with wards, staff, nurse checks and four months of pharmacy audits. */
 export async function seedDemo(b: Backend & { addSuperAdmin(email: string): void }, today = todayISO()) {
   for (const u of DEMO_USERS) await b.signUp(u.email, DEMO_PASSWORD, u.name);
   b.addSuperAdmin(DEMO_SUPER.email);
   await b.signUp(DEMO_SUPER.email, DEMO_PASSWORD, DEMO_SUPER.name);
 
-  // A spread of expiry dates: a few expired, some due soon, most fine.
+  // The Super admin builds each hospital's portal with its own look.
   const offsets = [-12, 9, 21, 45, 160, 300, 420, 610];
   const expiryFor = (i: number) => (i % 7 === 3 ? null : addDays(today, offsets[(i * 5) % offsets.length]));
-  const general = await createHospital(b, { name: "City General Hospital", code: "CGH", starterCarts: true }, expiryFor);
-  const riverside = await createHospital(b, { name: "Riverside Children's Hospital", code: "RCH", starterCarts: true }, (i) => addDays(today, 30 + ((i * 37) % 500)));
+  const general = await createHospital(
+    b,
+    { name: "City General Hospital", code: "CGH", starterCarts: true, theme: { preset: "teal", corners: "rounded", headings: "serif" } },
+    expiryFor,
+  );
+  const riverside = await createHospital(
+    b,
+    { name: "Riverside Children's Hospital", code: "RCH", starterCarts: true, theme: { preset: "plum", corners: "soft", headings: "sans", density: "compact" } },
+    (i) => addDays(today, 30 + ((i * 37) % 500)),
+  );
 
-  // The Super admin gives each person their rights.
   const ws = await loadWorkspace(b);
+  const superPerm: Perm = { role: null, isSuper: true, wardIds: [] };
   const h = ws!.hospitals.find((x) => x.id === general)!;
-  let d = await loadHospital(b, h, "hospital_admin");
-  for (const u of DEMO_USERS) await inviteMember(b, d, u.email, u.role);
-  const r = await loadHospital(b, ws!.hospitals.find((x) => x.id === riverside)!, "hospital_admin");
-  await inviteMember(b, r, DEMO_USERS[0].email, "hospital_admin");
+  let d = await loadHospital(b, h, superPerm);
+  const wardsOf = (w: "all" | string[]) => (w === "all" ? [] : d.carts.filter((c) => w.includes(c.cart_type)).map((c) => c.id));
+
+  // Super admin: hospital admins (some or all wards) and the two managers.
+  for (const u of DEMO_USERS.filter((x) => x.role === "hospital_admin" || x.role.endsWith("_manager")))
+    await inviteMember(b, d, u.email, u.role, wardsOf(u.wards));
+  const r = await loadHospital(b, ws!.hospitals.find((x) => x.id === riverside)!, superPerm);
+  await inviteMember(b, r, DEMO_USERS[0].email, "hospital_admin", []);
+
+  // The hospital admin creates the nurse and pharmacist IDs.
+  await b.signIn(DEMO_USERS[0].email, DEMO_PASSWORD);
+  await b.acceptInvites();
+  let aws = (await loadWorkspace(b))!;
+  d = await loadHospital(b, h, permFor(aws, h.id)!);
+  for (const u of DEMO_USERS.filter((x) => x.role === "nurse" || x.role === "pharmacy"))
+    await inviteMember(b, d, u.email, u.role, wardsOf(u.wards));
   for (const u of DEMO_USERS) {
     await b.signIn(u.email, DEMO_PASSWORD);
     await b.acceptInvites();
   }
 
-  // The nurse has done today's check on the ICU cart and found a gap.
-  const nurse = DEMO_USERS[1];
+  // The nurse has done today's check on the ICU cart and found a gap (seen by nursing only).
+  const nurse = DEMO_USERS.find((u) => u.role === "nurse")!;
   await b.signIn(nurse.email, DEMO_PASSWORD);
-  const nurseUser = (await b.currentUser())!;
-  d = await loadHospital(b, h, "nurse");
+  aws = (await loadWorkspace(b))!;
+  d = await loadHospital(b, h, permFor(aws, h.id)!);
   const icu = d.carts.find((c) => c.cart_type === "ICU")!;
-  const checkId = await startCheck(b, d, nurseUser, icu.id, "daily", today);
+  const checkId = await startCheck(b, d, aws.user, icu.id, "daily", today);
   const { check, lines } = await loadCheck(b, checkId);
   const atropine = lines.find((l) => l.item_name === "Atropine");
   if (atropine) await saveLine(b, atropine.id, { line_status: "short", found_qty: 1, remarks: "Used in code, pharmacy informed" });
   await submitCheck(b, check, { seal_number: "SEAL-40211", remarks: "Seal intact before check. Atropine short." });
+
+  // Four months of pharmacist audits so the Reports tab has history to compare.
+  const pharmacist = DEMO_USERS.find((u) => u.role === "pharmacy" && u.wards === "all")!;
+  const manager = DEMO_USERS.find((u) => u.role === "pharmacy_manager")!;
+  const pattern: LineStatus[] = ["short", "absent", "near_expiry", "short", "near_expiry", "absent", "damaged"];
+  const toClose: string[] = [];
+  for (let m = -3; m <= 0; m++) {
+    const start = monthStart(today, m);
+    const day = m === 0 ? (today < addDays(start, 7) ? today : addDays(start, 7)) : addDays(start, 7 + ((m + 3) % 3));
+    const at = `${day}T09:30:00.000Z`;
+    await b.signIn(pharmacist.email, DEMO_PASSWORD);
+    const pws = (await loadWorkspace(b))!;
+    d = await loadHospital(b, h, permFor(pws, h.id)!);
+    for (const [ci, cart] of d.carts.entries()) {
+      const id = await startCheck(b, d, pws.user, cart.id, "monthly", day);
+      const audit = await loadCheck(b, id);
+      // Fewer gaps month by month, except the ward cart which slips in the last month.
+      const gaps = Math.max(1, 6 - (m + 3) * 1 - ci) + (cart.cart_type === "Ward" && m === 0 ? 3 : 0);
+      for (let k = 0; k < gaps && k < audit.lines.length; k++) {
+        const line = audit.lines[(k * 7 + ci * 3 + (m + 3) * 5) % audit.lines.length];
+        const st = pattern[(k + ci + m + 3) % pattern.length];
+        const found = st === "short" ? Math.max(0, line.par_qty - 1) : st === "absent" ? 0 : null;
+        const note =
+          st === "absent"
+            ? "Not available in pharmacy"
+            : st === "short"
+              ? "Below standard quantity"
+              : st === "near_expiry"
+                ? "Short expiry communicated to team lead"
+                : st === "damaged"
+                  ? "Packaging damaged"
+                  : "";
+        await saveLine(b, line.id, { line_status: st, found_qty: found, remarks: note });
+      }
+      if (ci === 0) {
+        // One item kept above the approved quantity.
+        const extra = audit.lines.find((l) => l.line_status === "present");
+        if (extra) await saveLine(b, extra.id, { found_qty: extra.par_qty + 1, remarks: "Excess stock" });
+      }
+      await b.update("checks", { id }, { created_at: at });
+      await submitCheck(
+        b,
+        audit.check,
+        { seal_number: `SEAL-${5000 + (m + 3) * 10 + ci}`, remarks: gaps > 3 ? "Unavailable items are due to non-availability in the pharmacy." : "Short-expiry items have been communicated to the team lead." },
+        at,
+      );
+      if (m < 0) {
+        const after = await loadCheck(b, id);
+        for (const l of after.lines.filter((x) => x.line_status !== "present"))
+          await closeObservation(b, l.id, l.line_status === "near_expiry" ? "Replaced with longer-dated stock" : "Restocked from pharmacy");
+        await sendForReview(b, after.check);
+        toClose.push(id);
+      }
+    }
+  }
+  await b.signIn(manager.email, DEMO_PASSWORD);
+  const mws = (await loadWorkspace(b))!;
+  for (const id of toClose) {
+    const { check: c } = await loadCheck(b, id);
+    await closeCheck(b, c, mws.user, "Observations verified.", c.submitted_at ?? undefined);
+  }
 
   await b.signIn(DEMO_USERS[0].email, DEMO_PASSWORD);
 }
